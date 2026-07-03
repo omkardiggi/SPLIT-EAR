@@ -2471,6 +2471,9 @@
       if (!url) return;
 
       // All platforms are now handled by the backend — no client-side blocking needed
+      if (url.includes('instagram.com') || url.includes('facebook.com') || url.includes('fb.watch')) {
+        toast("Searching YouTube for Reel's description. If it plays the wrong song, please paste the song's direct link instead!", 'info');
+      }
 
       loadBtn.textContent = 'LOAD...';
       loadBtn.disabled = true;
