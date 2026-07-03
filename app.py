@@ -257,7 +257,7 @@ def _scrape_page_title(url):
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
     ]
-    if 'music.amazon' in url or 'amazon.' in url:
+    if any(domain in url for domain in ['music.amazon', 'amazon.', 'instagram.com', 'facebook.com', 'fb.watch']):
         uas = [
             'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -432,6 +432,50 @@ def _handle_drm_platform(url, platform_name, suffix_patterns):
     return {'playlistTitle': clean_title, 'tracks': tracks}
 
 
+def _clean_social_media_title(title, url):
+    """
+    Cleans up scraped page titles specifically for social media platforms
+    to get the actual video/reel description instead of the profile name.
+    """
+    if not title:
+        return title
+        
+    if 'instagram.com' in url:
+        # Match pattern: User on Instagram: "Caption"
+        match = re.search(r'on Instagram:\s*"(.*?)"', title, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        # Alternative: User on Instagram: Caption
+        match = re.search(r'on Instagram:\s*(.*)', title, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+            
+    if 'facebook.com' in url or 'fb.watch' in url:
+        title = re.sub(r'\s*[-–—|·]\s*Facebook\s*$', '', title, flags=re.IGNORECASE)
+        match = re.search(r'^(.*?)\s*on\s*Facebook', title, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+            
+    return title
+
+
+def _clean_search_query(query):
+    """Clean up a search query by removing emojis, hashtags, and keeping it concise."""
+    if not query:
+        return query
+    query = re.sub(r'#\w+', '', query)
+    query = query.encode('ascii', 'ignore').decode('ascii')
+    query = re.sub(r'\s+', ' ', query).strip()
+    if len(query) > 100:
+        truncated = query[:100]
+        last_space = truncated.rfind(' ')
+        if last_space > 50:
+            query = truncated[:last_space]
+        else:
+            query = truncated
+    return query.strip()
+
+
 def _try_page_scrape_fallback(url):
     """
     Last-resort fallback: scrape ANY page's title/og:title and use it
@@ -448,24 +492,29 @@ def _try_page_scrape_fallback(url):
     if not title or len(title) < 3:
         return None
 
+    # Clean social media titles (Instagram, Facebook)
+    title = _clean_social_media_title(title, url)
+    
     # Remove common generic website suffixes
     clean = _clean_platform_suffix(title, [
         r'\s*[-–—|·]\s*(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit|X|Tumblr).*$',
         r'\s*on\s+(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit).*$',
     ])
-    if not clean or len(clean) < 3:
-        return None
+    
+    search_query = _clean_search_query(clean)
+    if not search_query or len(search_query) < 3:
+        search_query = clean[:100]
 
-    logger.info(f"Page-scrape fallback: '{title}' -> YouTube search '{clean}'")
+    logger.info(f"Page-scrape fallback: '{title}' -> YouTube search '{search_query}'")
 
     tracks = [{
         'id': f'scrape_{abs(hash(url)) % 100000}',
-        'title': clean,
+        'title': search_query,
         'duration': 0,
-        'url': f'ytsearch1:{clean}'
+        'url': f'ytsearch1:{search_query}'
     }]
 
-    return {'playlistTitle': clean, 'tracks': tracks}
+    return {'playlistTitle': search_query, 'tracks': tracks}
 
 
 # ==========================================
