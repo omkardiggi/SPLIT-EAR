@@ -6,3 +6,4 @@ venv/
 env/
 node_modules/
 .DS_Store
+scratch/

@@ -11,7 +11,11 @@ from flask_cors import CORS
 import yt_dlp
 import requests as http_requests
 import re
-from playwright.sync_api import sync_playwright
+from html import unescape as html_unescape
+from dotenv import load_dotenv
+
+# Load local environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
@@ -114,9 +118,13 @@ def format_sse(data, event=None):
 # Static file serving
 # ==========================================
 
+@app.route('/api/health')
+def health():
+    return jsonify({'status': 'ok'}), 200
+
 @app.route('/')
 def index():
-    return send_from_directory('.', 'dual-channel-player (2).html')
+    return send_from_directory('.', 'player.html')
 
 @app.route('/<path:path>')
 def serve_static(path):
@@ -124,6 +132,264 @@ def serve_static(path):
     if path.startswith('api/'):
         return jsonify({'error': 'Not found'}), 404
     return send_from_directory('.', path)
+
+# ==========================================
+# Platform-Specific Audio Extraction Helpers
+# ==========================================
+
+def _parse_url_path_slug(url):
+    """
+    Fallback method: parse a human-readable title from the URL path segment.
+    E.g. https://music.apple.com/us/album/starboy/1440826287 -> starboy
+    E.g. https://www.jiosaavn.com/song/starboy/El0wAip6fFY -> starboy
+    """
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        path = parsed.path
+        segments = [s.strip() for s in path.split('/') if s.strip()]
+        
+        # Look for a segment following known descriptors
+        descriptors = ['album', 'song', 'track', 'playlist', 'playlists', 'albums', 'songs']
+        for i, seg in enumerate(segments):
+            if seg.lower() in descriptors and i + 1 < len(segments):
+                slug = segments[i + 1]
+                # If slug is just an ID/number/hash, check if it contains letters/words
+                clean = slug.replace('-', ' ').replace('_', ' ').strip()
+                if len(clean) >= 3 and not re.match(r'^[0-9a-fA-F]{24,}$', clean) and not clean.isdigit():
+                    return clean.title()
+                        
+        # Fallback to the longest non-numeric path segment that is not an ID
+        valid_segments = []
+        for seg in segments:
+            if seg.lower() not in descriptors and not seg.isdigit() and len(seg) >= 3:
+                if not re.match(r'^[0-9a-fA-F]{20,}$', seg) and not re.match(r'^[a-zA-Z0-9]{22}$', seg):
+                    valid_segments.append(seg.replace('-', ' ').replace('_', ' ').strip())
+        if valid_segments:
+            return valid_segments[-1].title()
+    except Exception as e:
+        logger.warning(f"URL path parsing failed: {e}")
+    return None
+
+
+def _scrape_page_title(url):
+    """Fetch a page and extract og:title or <title> tag for search query generation."""
+    # Prioritize Googlebot for Amazon Music (to get pre-rendered HTML)
+    # Use standard Chrome for other platforms to avoid bot blocks
+    uas = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+    ]
+    if 'music.amazon' in url or 'amazon.' in url:
+        uas = [
+            'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+
+    for ua in uas:
+        try:
+            headers = {
+                'User-Agent': ua,
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+            resp = http_requests.get(url, headers=headers, timeout=12, allow_redirects=True)
+            if resp.status_code == 200:
+                text = resp.text
+                
+                title = None
+                for pattern in [
+                    r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']',
+                    r'<meta\s+content=["\'](.*?)["\']\s+property=["\']og:title["\']',
+                ]:
+                    m = re.search(pattern, text, re.IGNORECASE)
+                    if m:
+                        title = html_unescape(m.group(1).strip())
+                        break
+                
+                if not title:
+                    m = re.search(r'<title[^>]*>(.*?)</title>', text, re.IGNORECASE | re.DOTALL)
+                    if m:
+                        title = html_unescape(m.group(1).strip())
+                
+                # Check for bot block or error page title
+                if title and not any(term in title.lower() for term in ['access denied', 'forbidden', 'robot', 'not found', 'error']):
+                    return title
+        except Exception as e:
+            logger.warning(f"Scrape failed with UA {ua[:30]}...: {e}")
+            
+    return None
+
+
+def _clean_platform_suffix(title, patterns):
+    """Remove platform-specific suffixes/noise from a scraped page title."""
+    if not title:
+        return title
+    for pattern in patterns:
+        title = re.sub(pattern, '', title, flags=re.IGNORECASE).strip()
+    # Clean up trailing separators
+    title = re.sub(r'\s*[-–—|·:]\s*$', '', title).strip()
+    return title
+
+
+def _handle_deezer(url):
+    """Use the free Deezer public API (no auth required) to extract track metadata."""
+    match = re.search(r'deezer\.com/(?:\w{2}/)?(track|album|playlist)/(\d+)', url)
+    if not match:
+        return None
+
+    item_type, item_id = match.groups()
+    tracks = []
+    playlist_title = 'Deezer Music'
+
+    try:
+        if item_type == 'track':
+            resp = http_requests.get(f'https://api.deezer.com/track/{item_id}', timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if 'error' in data:
+                return None
+            artist = data.get('artist', {}).get('name', '')
+            song = data.get('title', '')
+            query = f"{song} {artist}".strip()
+            playlist_title = query
+            tracks.append({
+                'id': str(item_id),
+                'title': query,
+                'duration': data.get('duration', 0),
+                'url': f'ytsearch1:{query}'
+            })
+
+        elif item_type == 'album':
+            resp = http_requests.get(f'https://api.deezer.com/album/{item_id}', timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if 'error' in data:
+                return None
+            album_artist = data.get('artist', {}).get('name', '')
+            playlist_title = f"{data.get('title', 'Album')} — {album_artist}"
+            for t in data.get('tracks', {}).get('data', []):
+                artist = t.get('artist', {}).get('name', album_artist)
+                query = f"{t.get('title', '')} {artist}".strip()
+                tracks.append({
+                    'id': str(t.get('id', '')),
+                    'title': query,
+                    'duration': t.get('duration', 0),
+                    'url': f'ytsearch1:{query}'
+                })
+
+        elif item_type == 'playlist':
+            # Deezer API paginates at 25 tracks per page by default
+            api_url = f'https://api.deezer.com/playlist/{item_id}'
+            resp = http_requests.get(api_url, timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if 'error' in data:
+                return None
+            playlist_title = data.get('title', 'Deezer Playlist')
+
+            # Fetch all tracks (handle pagination)
+            track_data = data.get('tracks', {}).get('data', [])
+            next_url = data.get('tracks', {}).get('next')
+            while next_url:
+                try:
+                    next_resp = http_requests.get(next_url, timeout=10)
+                    if next_resp.status_code != 200:
+                        break
+                    page = next_resp.json()
+                    track_data.extend(page.get('data', []))
+                    next_url = page.get('next')
+                except Exception:
+                    break
+
+            for t in track_data:
+                artist = t.get('artist', {}).get('name', '')
+                query = f"{t.get('title', '')} {artist}".strip()
+                tracks.append({
+                    'id': str(t.get('id', '')),
+                    'title': query,
+                    'duration': t.get('duration', 0),
+                    'url': f'ytsearch1:{query}'
+                })
+
+        if tracks:
+            return {'playlistTitle': playlist_title, 'tracks': tracks}
+    except Exception as e:
+        logger.warning(f"Deezer API error: {e}")
+
+    return None
+
+
+def _handle_drm_platform(url, platform_name, suffix_patterns):
+    """
+    Generic handler for DRM music platforms (Apple Music, Tidal, Amazon, JioSaavn, Gaana).
+    Scrapes the page for the song/artist title and converts it to a YouTube search query.
+    If scraping fails, it falls back to parsing the name from the URL path.
+    """
+    title = _scrape_page_title(url)
+    
+    if not title:
+        # Fallback to URL path slug parsing
+        title = _parse_url_path_slug(url)
+        if title:
+            logger.info(f"{platform_name}: fall back to URL path parse '{title}'")
+            
+    if not title:
+        return None
+
+    clean_title = _clean_platform_suffix(title, suffix_patterns)
+    if not clean_title or len(clean_title) < 2:
+        return None
+
+    logger.info(f"{platform_name}: resolved to YouTube search '{clean_title}'")
+
+    tracks = [{
+        'id': f'{platform_name.lower().replace(" ", "_")}_{abs(hash(url)) % 100000}',
+        'title': clean_title,
+        'duration': 0,
+        'url': f'ytsearch1:{clean_title}'
+    }]
+
+    return {'playlistTitle': clean_title, 'tracks': tracks}
+
+
+def _try_page_scrape_fallback(url):
+    """
+    Last-resort fallback: scrape ANY page's title/og:title and use it
+    as a YouTube search query. Works for blogs, news articles linking to
+    songs, social media posts with song names, etc.
+    """
+    title = _scrape_page_title(url)
+    
+    if not title:
+        title = _parse_url_path_slug(url)
+        if title:
+            logger.info(f"Page-scrape fallback: fall back to URL path parse '{title}'")
+            
+    if not title or len(title) < 3:
+        return None
+
+    # Remove common generic website suffixes
+    clean = _clean_platform_suffix(title, [
+        r'\s*[-–—|·]\s*(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit|X|Tumblr).*$',
+        r'\s*on\s+(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit).*$',
+    ])
+    if not clean or len(clean) < 3:
+        return None
+
+    logger.info(f"Page-scrape fallback: '{title}' → YouTube search '{clean}'")
+
+    tracks = [{
+        'id': f'scrape_{abs(hash(url)) % 100000}',
+        'title': clean,
+        'duration': 0,
+        'url': f'ytsearch1:{clean}'
+    }]
+
+    return {'playlistTitle': clean, 'tracks': tracks}
+
 
 # ==========================================
 # Playlist & Stream endpoints
@@ -141,122 +407,243 @@ def get_playlist():
         return jsonify({'error': 'No URL provided'}), 400
 
     try:
-        # --- Handle Spotify URLs ---
+        # --- Handle Spotify URLs via Spotify Web API ---
         if 'spotify.com' in url:
+            client_id = os.environ.get('SPOTIFY_CLIENT_ID')
+            client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
+            
+            if not client_id or not client_secret:
+                return jsonify({'error': 'Spotify is not configured. The server admin needs to set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables. Get them free at developer.spotify.com'}), 400
+            
+            # Extract item type and ID from URL
             match = re.search(r'(playlist|album|track)[/:]([a-zA-Z0-9]+)', url)
             if not match:
-                return jsonify({'error': 'Invalid Spotify URL format'}), 400
-                
+                return jsonify({'error': 'Invalid Spotify URL. Paste a playlist, album, or track link.'}), 400
+            
             item_type = match.group(1)
             item_id = match.group(2)
-            embed_url = f"https://open.spotify.com/embed/{item_type}/{item_id}"
             
-            logger.info(f"Extracting Spotify playlist via embed: {embed_url}")
+            # Get access token via Client Credentials flow (no user login needed)
+            token_resp = http_requests.post(
+                'https://accounts.spotify.com/api/token',
+                data={'grant_type': 'client_credentials'},
+                auth=(client_id, client_secret),
+                timeout=10
+            )
+            if token_resp.status_code != 200:
+                return jsonify({'error': 'Failed to authenticate with Spotify API. Check your client ID/secret.'}), 400
             
-            tracks = []
-            playlist_title = "Spotify Converted Playlist"
-            
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto(embed_url, wait_until='networkidle', timeout=15000)
-                page.wait_for_timeout(3000) # Give it time to render tracks
-                
-                text_content = page.evaluate("() => document.body.innerText")
-                
-                # Try getting the title
-                try:
-                    title_elem = page.query_selector('h1')
-                    if title_elem:
-                        playlist_title = title_elem.inner_text()
-                except:
-                    pass
-                    
-                browser.close()
-                
-                extracted_tracks = []
-                lines = text_content.split('\n')
-                for i in range(len(lines)):
-                    line = lines[i].strip()
-                    if line.isdigit() and int(line) > 0:
-                        if i + 3 < len(lines):
-                            title = lines[i+1].strip()
-                            artist_raw = lines[i+2].strip()
-                            artist = artist_raw[1:] if (artist_raw.startswith('E') and len(artist_raw) > 1) else artist_raw
-                            time_raw = lines[i+3].strip()
-                            if re.match(r'^\d+:\d+$', time_raw):
-                                extracted_tracks.append({'title': title, 'artist': artist})
-                
-                if not extracted_tracks:
-                    return jsonify({'error': 'Could not extract tracks from Spotify. Playlist might be private or invalid.'}), 400
-                    
-                for idx, t in enumerate(extracted_tracks):
-                    title = t.get('title', '')
-                    artist = t.get('artist', '')
-                    if title:
-                        query = f"{title} {artist}".strip()
-                        tracks.append({
-                            'id': f"spotify-{item_id}-{idx}",
-                            'title': query,
-                            'duration': 0, # Don't have exact duration here
-                            'url': f"ytsearch1:{query}"
-                        })
-                        
-            return jsonify({
-                'playlistTitle': playlist_title,
-                'tracks': tracks
-            })
-        
-        # --- Handle YouTube/SoundCloud etc ---
-        ydl_opts = {
-            'extract_flat': True,
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'X-Forwarded-For': '192.168.1.1' # Simple spoofing to reduce block chance
-            }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Extracting playlist info for: {url}")
-            info = ydl.extract_info(url, download=False)
-            
-            if not info:
-                return jsonify({'error': 'Could not extract playlist info'}), 400
+            access_token = token_resp.json().get('access_token')
+            sp_headers = {'Authorization': f'Bearer {access_token}'}
             
             tracks = []
+            playlist_title = 'Spotify Playlist'
             
-            if 'entries' in info:
-                playlist_title = info.get('title') or 'Playlist / Album'
-                entries = info.get('entries', [])
-                for entry in entries:
-                    if entry:
-                        track_title = entry.get('title') or entry.get('name') or 'Unknown Track'
-                        track_url = entry.get('url') or entry.get('webpage_url')
-                        if not track_url and entry.get('id'):
-                            track_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
-                        
-                        if track_url:
-                            tracks.append({
-                                'id': entry.get('id') or track_url,
-                                'title': track_title,
-                                'duration': entry.get('duration'),
-                                'url': track_url
-                            })
+            if item_type == 'track':
+                # Single track
+                track_resp = http_requests.get(f'https://api.spotify.com/v1/tracks/{item_id}', headers=sp_headers, timeout=10)
+                if track_resp.status_code != 200:
+                    return jsonify({'error': 'Could not fetch track. It might be private or invalid.'}), 400
+                t = track_resp.json()
+                artist_names = ', '.join([a['name'] for a in t.get('artists', [])])
+                query = f"{t['name']} {artist_names}"
+                playlist_title = query
+                tracks.append({'id': t['id'], 'title': query, 'duration': t.get('duration_ms', 0) // 1000, 'url': f'ytsearch1:{query}'})
+                
+            elif item_type == 'album':
+                # Album
+                album_resp = http_requests.get(f'https://api.spotify.com/v1/albums/{item_id}', headers=sp_headers, timeout=10)
+                if album_resp.status_code != 200:
+                    return jsonify({'error': 'Could not fetch album. It might be private or invalid.'}), 400
+                album = album_resp.json()
+                playlist_title = f"{album.get('name', 'Album')} — {', '.join([a['name'] for a in album.get('artists', [])])}"
+                for t in album.get('tracks', {}).get('items', []):
+                    artist_names = ', '.join([a['name'] for a in t.get('artists', [])])
+                    query = f"{t['name']} {artist_names}"
+                    tracks.append({'id': t['id'], 'title': query, 'duration': t.get('duration_ms', 0) // 1000, 'url': f'ytsearch1:{query}'})
+                    
             else:
-                playlist_title = info.get('title') or 'Single Track'
-                tracks.append({
-                    'id': info.get('id') or url,
-                    'title': playlist_title,
-                    'duration': info.get('duration'),
-                    'url': url
-                })
+                # Playlist — may need pagination for large playlists
+                pl_resp = http_requests.get(f'https://api.spotify.com/v1/playlists/{item_id}', headers=sp_headers, timeout=10)
+                if pl_resp.status_code != 200:
+                    return jsonify({'error': 'Could not fetch playlist. It might be private or invalid.'}), 400
+                pl = pl_resp.json()
+                playlist_title = pl.get('name', 'Spotify Playlist')
                 
-            return jsonify({
-                'title': playlist_title,
-                'tracks': tracks
-            })
+                # Fetch all tracks (handles pagination for playlists > 100 tracks)
+                items = pl.get('tracks', {}).get('items', [])
+                next_url = pl.get('tracks', {}).get('next')
+                
+                while next_url:
+                    next_resp = http_requests.get(next_url, headers=sp_headers, timeout=10)
+                    if next_resp.status_code != 200:
+                        break
+                    page = next_resp.json()
+                    items.extend(page.get('items', []))
+                    next_url = page.get('next')
+                
+                for item in items:
+                    t = item.get('track')
+                    if not t or not t.get('name'):
+                        continue
+                    artist_names = ', '.join([a['name'] for a in t.get('artists', [])])
+                    query = f"{t['name']} {artist_names}"
+                    tracks.append({'id': t.get('id', ''), 'title': query, 'duration': t.get('duration_ms', 0) // 1000, 'url': f'ytsearch1:{query}'})
             
+            logger.info(f"Spotify: extracted {len(tracks)} tracks from {item_type} '{playlist_title}'")
+            return jsonify({'playlistTitle': playlist_title, 'tracks': tracks})
+        
+        # --- Deezer → Free public API (no auth needed) ---
+        if 'deezer.com' in url:
+            result = _handle_deezer(url)
+            if result and result.get('tracks'):
+                logger.info(f"Deezer: extracted {len(result['tracks'])} tracks")
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract tracks from Deezer. The link might be invalid or private.'}), 400
+
+        # --- Apple Music → iTunes Lookup API (Accurate Song Lookup) → Fallback to Scrape ---
+        if 'music.apple.com' in url:
+            # Check for song track ID query parameter "?i=1488408488" or similar
+            track_match = re.search(r'[?&]i=(\d+)', url)
+            if track_match:
+                track_id = track_match.group(1)
+                try:
+                    logger.info(f"Apple Music: trying iTunes API lookup for track {track_id}")
+                    api_resp = http_requests.get(f'https://itunes.apple.com/lookup?id={track_id}', timeout=8)
+                    if api_resp.status_code == 200:
+                        res_data = api_resp.json()
+                        if res_data.get('resultCount', 0) > 0:
+                            track_info = res_data['results'][0]
+                            song_title = f"{track_info.get('trackName', '')} {track_info.get('artistName', '')}".strip()
+                            if song_title:
+                                logger.info(f"Apple Music: iTunes API resolved track to '{song_title}'")
+                                return jsonify({
+                                    'playlistTitle': song_title,
+                                    'tracks': [{
+                                        'id': f'apple_{track_id}',
+                                        'title': song_title,
+                                        'duration': track_info.get('trackTimeMillis', 0) // 1000,
+                                        'url': f'ytsearch1:{song_title}'
+                                    }]
+                                })
+                except Exception as api_err:
+                    logger.warning(f"iTunes API lookup failed: {api_err}")
+
+            result = _handle_drm_platform(url, 'Apple Music', [
+                r'\s*[-–—]\s*(?:Single|Album|EP|Playlist)\s+by\s+.*',
+                r'\s+on\s+Apple\s*Music.*$',
+                r'\s*[-–—]\s*Apple\s*Music.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from Apple Music. Try pasting a direct song link.'}), 400
+
+        # --- Tidal → Scrape page metadata → YouTube search ---
+        if 'tidal.com' in url:
+            result = _handle_drm_platform(url, 'Tidal', [
+                r'\s*[-–—|]\s*TIDAL.*$',
+                r'\s+on\s+TIDAL.*$',
+                r'\s*[-–—]\s*Tidal.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from Tidal. Try pasting a direct song link.'}), 400
+
+        # --- Amazon Music → Scrape page metadata → YouTube search ---
+        if 'music.amazon' in url or ('amazon.' in url and '/music' in url):
+            result = _handle_drm_platform(url, 'Amazon Music', [
+                r'\s*[-–—|]\s*Amazon\s*Music.*$',
+                r'\s+on\s+Amazon\s*Music.*$',
+                r'\s*\|\s*Amazon\.com.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from Amazon Music. Try pasting a direct song link.'}), 400
+
+        # --- JioSaavn → Scrape page metadata → YouTube search ---
+        if 'jiosaavn.com' in url or 'saavn.com' in url:
+            result = _handle_drm_platform(url, 'JioSaavn', [
+                r'\s*[-–—|]\s*JioSaavn.*$',
+                r'\s+on\s+JioSaavn.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from JioSaavn. Try pasting a direct song link.'}), 400
+
+        # --- Gaana → Scrape page metadata → YouTube search ---
+        if 'gaana.com' in url:
+            result = _handle_drm_platform(url, 'Gaana', [
+                r'\s*[-–—|]\s*Gaana.*$',
+                r'\s+on\s+Gaana.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from Gaana. Try pasting a direct song link.'}), 400
+
+        # --- All other URLs: yt-dlp first, then page-scrape fallback ---
+        # yt-dlp natively supports 1700+ sites including YouTube, SoundCloud,
+        # Instagram, TikTok, Twitter/X, Facebook, Reddit, Bandcamp, Vimeo, etc.
+        try:
+            ydl_opts = {
+                'extract_flat': True,
+                'quiet': True,
+                'no_warnings': True,
+                'http_headers': {
+                    'X-Forwarded-For': '192.168.1.1'
+                }
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"yt-dlp: extracting info for: {url}")
+                info = ydl.extract_info(url, download=False)
+
+                if not info:
+                    raise Exception('yt-dlp returned no info')
+
+                tracks = []
+
+                if 'entries' in info:
+                    playlist_title = info.get('title') or 'Playlist / Album'
+                    entries = info.get('entries', [])
+                    for entry in entries:
+                        if entry:
+                            track_title = entry.get('title') or entry.get('name') or 'Unknown Track'
+                            track_url = entry.get('url') or entry.get('webpage_url')
+                            if not track_url and entry.get('id'):
+                                track_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+
+                            if track_url:
+                                tracks.append({
+                                    'id': entry.get('id') or track_url,
+                                    'title': track_title,
+                                    'duration': entry.get('duration'),
+                                    'url': track_url
+                                })
+                else:
+                    playlist_title = info.get('title') or 'Single Track'
+                    tracks.append({
+                        'id': info.get('id') or url,
+                        'title': playlist_title,
+                        'duration': info.get('duration'),
+                        'url': url
+                    })
+
+                if tracks:
+                    return jsonify({
+                        'playlistTitle': playlist_title,
+                        'tracks': tracks
+                    })
+                raise Exception('No playable tracks found')
+
+        except Exception as ydl_err:
+            # yt-dlp failed — try page scrape → YouTube search as last resort
+            logger.info(f"yt-dlp failed for {url}, trying page-scrape fallback: {ydl_err}")
+            fallback = _try_page_scrape_fallback(url)
+            if fallback and fallback.get('tracks'):
+                return jsonify(fallback)
+            # Nothing worked — return the original yt-dlp error
+            return jsonify({'error': f'Could not extract audio from this URL. {str(ydl_err)}'}), 400
+
     except Exception as e:
         logger.error(f"Error extracting playlist: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -440,4 +827,5 @@ def sse_stream():
     )
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True, threaded=True)
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=True, threaded=True)

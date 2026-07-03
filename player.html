@@ -1379,7 +1379,7 @@
     <div class="playlist-section">
       <label><span class="hud-dot"></span> Online Media Deck</label>
       <div class="url-input-row">
-        <input type="text" class="playlist-url-input" placeholder="YouTube or Spotify Link..." aria-label="YouTube or Spotify Link">
+        <input type="text" class="playlist-url-input" placeholder="Paste any music link (Spotify, YouTube, Deezer, Apple Music, Instagram...)" aria-label="Paste any music link">
         <button class="load-url-btn">LOAD</button>
       </div>
       <div class="track-list-container" style="display: none;">
@@ -1527,7 +1527,7 @@
           <circle cx="52" cy="64" r="1.5" fill="#e8ecf5" />
           <polygon points="48,44 43,41 45,47" fill="#ff2d95" opacity="0.8" filter="url(#glow-filter-r)" />
         </svg>
-        <span class="earbud-label r-label">EARBUD L</span>
+        <span class="earbud-label r-label">EARBUD R</span>
       </div>
     </div>
 
@@ -1637,7 +1637,7 @@
     <div class="playlist-section">
       <label><span class="hud-dot"></span> Online Media Deck</label>
       <div class="url-input-row">
-        <input type="text" class="playlist-url-input" placeholder="YouTube or Spotify Link..." aria-label="YouTube or Spotify Link">
+        <input type="text" class="playlist-url-input" placeholder="Paste any music link (Spotify, YouTube, Deezer, Apple Music, Instagram...)" aria-label="Paste any music link">
         <button class="load-url-btn">LOAD</button>
       </div>
       <div class="track-list-container" style="display: none;">
@@ -2470,12 +2470,7 @@
       const url = input.value.trim();
       if (!url) return;
 
-      // Detect DRM-locked platforms and give helpful guidance (except Spotify which has auto-convert)
-      if (url.includes('music.apple.com') || url.includes('tidal.com') || url.includes('deezer.com')) {
-        const platform = url.includes('apple') ? 'Apple Music' : url.includes('tidal') ? 'Tidal' : 'Deezer';
-        toast(`${platform} uses DRM encryption — audio cannot be streamed directly. Convert your playlist to YouTube using TuneMyMusic.com or Soundiiz.com (free, 10 seconds), then paste the YouTube link here!`, 'warn');
-        return;
-      }
+      // All platforms are now handled by the backend — no client-side blocking needed
 
       loadBtn.textContent = 'LOAD...';
       loadBtn.disabled = true;
@@ -2492,7 +2487,7 @@
           throw new Error('No playlist tracks resolved.');
         }
 
-        ch.playlistTitle = data.title || 'Loaded Playlist';
+        ch.playlistTitle = data.playlistTitle || data.title || 'Loaded Playlist';
         ch.playlistTracks = data.tracks;
         ch.playlistIndex = 0;
 

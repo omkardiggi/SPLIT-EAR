@@ -1,7 +1,5 @@
 Flask==3.0.3
 Flask-Cors==4.0.0
-yt-dlp==2024.5.27
+yt-dlp
 requests==2.32.2
-playwright==1.44.0
 gunicorn==22.0.0
-gevent==24.2.1

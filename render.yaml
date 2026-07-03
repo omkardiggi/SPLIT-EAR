@@ -1,9 +1,15 @@
 services:
   - type: web
-    name: blstr-player
+    name: split-ear
     env: python
-    buildCommand: "pip install -r requirements.txt && playwright install chromium"
-    startCommand: "gunicorn -w 1 --threads 4 app:app"
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app"
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
