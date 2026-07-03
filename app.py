@@ -137,6 +137,83 @@ def serve_static(path):
 # Platform-Specific Audio Extraction Helpers
 # ==========================================
 
+def _scrape_spotify_embed(url):
+    """
+    Scrapes the Spotify public embed page to get tracklists without API keys.
+    Works for tracks, albums, and playlists (up to 50 tracks).
+    """
+    embed_url = url
+    if 'spotify.com' in url and '/embed' not in url:
+        embed_url = url.replace('spotify.com/', 'spotify.com/embed/')
+        
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+        resp = http_requests.get(embed_url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return None
+            
+        match = re.search(r'<script[^>]*id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', resp.text, re.DOTALL)
+        if not match:
+            return None
+            
+        data = json.loads(match.group(1).strip())
+        props = data.get('props', {})
+        page_props = props.get('pageProps', {})
+        state = page_props.get('state', {})
+        entity = state.get('data', {}).get('entity', {})
+        
+        name = entity.get('name') or entity.get('title') or 'Spotify Playlist'
+        track_list_raw = entity.get('trackList', [])
+        
+        if not track_list_raw and entity.get('type') == 'track':
+            track_title = entity.get('name') or entity.get('title')
+            artists = entity.get('subtitle', '')
+            track_id = entity.get('id') or 'track'
+            duration_ms = entity.get('duration', 0)
+            
+            query = f"{track_title} {artists}".strip()
+            return {
+                'playlistTitle': track_title,
+                'tracks': [{
+                    'id': track_id,
+                    'title': query,
+                    'duration': duration_ms // 1000,
+                    'url': f'ytsearch1:{query}'
+                }]
+            }
+            
+        tracks = []
+        for t in track_list_raw:
+            track_title = t.get('title') or 'Unknown Track'
+            artists = t.get('subtitle') or ''
+            artists = artists.replace('\xa0', ' ').replace('\u200b', '').strip()
+            track_title = track_title.replace('\xa0', ' ').replace('\u200b', '').strip()
+            
+            query = f"{track_title} {artists}".strip()
+            track_uri = t.get('uri') or ''
+            track_id = track_uri.split(':')[-1] if track_uri else 'track'
+            
+            tracks.append({
+                'id': track_id,
+                'title': query,
+                'duration': t.get('duration', 0) // 1000,
+                'url': f'ytsearch1:{query}'
+            })
+            
+        if tracks:
+            return {
+                'playlistTitle': name,
+                'tracks': tracks
+            }
+    except Exception as e:
+        logger.warning(f"Spotify embed scraping failed: {e}")
+        
+    return None
+
+
 def _parse_url_path_slug(url):
     """
     Fallback method: parse a human-readable title from the URL path segment.
@@ -379,7 +456,7 @@ def _try_page_scrape_fallback(url):
     if not clean or len(clean) < 3:
         return None
 
-    logger.info(f"Page-scrape fallback: '{title}' → YouTube search '{clean}'")
+    logger.info(f"Page-scrape fallback: '{title}' -> YouTube search '{clean}'")
 
     tracks = [{
         'id': f'scrape_{abs(hash(url)) % 100000}',
@@ -407,13 +484,22 @@ def get_playlist():
         return jsonify({'error': 'No URL provided'}), 400
 
     try:
-        # --- Handle Spotify URLs via Spotify Web API ---
+        # --- Handle Spotify URLs ---
         if 'spotify.com' in url:
+            # First try scraping the Spotify embed page (requires no credentials or premium developer account)
+            logger.info("Spotify: trying public embed scraper first")
+            result = _scrape_spotify_embed(url)
+            if result and result.get('tracks'):
+                logger.info(f"Spotify (Scraper): successfully extracted {len(result['tracks'])} tracks")
+                return jsonify(result)
+                
+            # If scraper fails, fall back to official Web API (requires valid client ID/secret + premium developer subscription)
+            logger.info("Spotify: scraper failed, falling back to official Web API")
             client_id = os.environ.get('SPOTIFY_CLIENT_ID')
             client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
             
             if not client_id or not client_secret:
-                return jsonify({'error': 'Spotify is not configured. The server admin needs to set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables. Get them free at developer.spotify.com'}), 400
+                return jsonify({'error': 'Spotify is not configured. Setup your free SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables. Get them free at developer.spotify.com'}), 400
             
             # Extract item type and ID from URL
             match = re.search(r'(playlist|album|track)[/:]([a-zA-Z0-9]+)', url)
@@ -431,6 +517,9 @@ def get_playlist():
                 timeout=10
             )
             if token_resp.status_code != 200:
+                err_text = token_resp.text
+                if 'premium' in err_text.lower():
+                    return jsonify({'error': 'Spotify API returned 403. Spotify now requires developers to have an active Spotify Premium subscription to use their API. Use other supported sites like Apple Music, Deezer, YouTube, or JioSaavn.'}), 400
                 return jsonify({'error': 'Failed to authenticate with Spotify API. Check your client ID/secret.'}), 400
             
             access_token = token_resp.json().get('access_token')
