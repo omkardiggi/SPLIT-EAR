@@ -1333,9 +1333,7 @@
 </head>
 <body>
 
-<!-- HTML5 streaming video nodes for uploaded files (plays both audio & video containers) -->
-<video id="audioL" loop crossorigin="anonymous" style="display: none; pointer-events: none;"></video>
-<video id="audioR" loop crossorigin="anonymous" style="display: none; pointer-events: none;"></video>
+
 
 <header>
   <div class="eyebrow">Tactical Stereo Splitter · v2.5</div>
@@ -1998,9 +1996,83 @@
   const chL = makeChannel(-1, document.getElementById('selL'), document.getElementById('volL'), cardL);
   const chR = makeChannel( 1, document.getElementById('selR'), document.getElementById('volR'), cardR);
 
-  // Eagerly bind elements to prevent null reference errors before AudioContext starts
-  chL.audioElement = document.getElementById('audioL');
-  chR.audioElement = document.getElementById('audioR');
+  // Helper to cleanup any existing dynamic audio element and its source node
+  function cleanupAudioElement(ch) {
+    if (ch.audioElement) {
+      try { ch.audioElement.pause(); } catch(e){}
+      ch.audioElement.src = '';
+      ch.audioElement.load();
+      try { ch.audioElement.remove(); } catch(e){}
+      ch.audioElement = null;
+    }
+    if (ch.mediaSourceNode) {
+      try { ch.mediaSourceNode.disconnect(); } catch(e){}
+      ch.mediaSourceNode = null;
+    }
+  }
+
+  // Helper to initialize a new dynamic audio element and route it through the AudioContext
+  function initAudioElement(ch, srcUrl) {
+    cleanupAudioElement(ch);
+
+    const audio = document.createElement('audio');
+    audio.loop = (ch.playlistIndex === -1);
+    audio.crossOrigin = 'anonymous';
+    audio.src = srcUrl;
+    if (typeof syncMode !== 'undefined' && syncMode === 'remote') {
+      audio.muted = true;
+    }
+    ch.audioElement = audio;
+
+    ch.mediaSourceNode = ctx.createMediaElementSource(audio);
+    ch.mediaSourceNode.connect(ch.gain);
+
+    // Setup timeline event listeners dynamically
+    const sideName = ch === chL ? 'L' : 'R';
+    const wrap = document.getElementById('timeline' + sideName);
+    if (wrap) {
+      const container = wrap.querySelector('.progress-bar-container');
+      const fill = container.querySelector('.progress-fill');
+      const handle = container.querySelector('.progress-handle');
+      const elapsedEl = wrap.querySelector('.time-elapsed');
+      const totalEl = wrap.querySelector('.time-total');
+
+      const updateTimeline = () => {
+        if (ch.isSeeking) return;
+        const cur = audio.currentTime;
+        const dur = audio.duration;
+        elapsedEl.textContent = formatTime(cur);
+        totalEl.textContent = formatTime(dur);
+        const pct = dur > 0 ? (cur / dur) * 100 : 0;
+        fill.style.width = pct + '%';
+        handle.style.left = pct + '%';
+      };
+
+      audio.addEventListener('timeupdate', updateTimeline);
+      audio.addEventListener('durationchange', () => {
+        totalEl.textContent = formatTime(audio.duration);
+      });
+    }
+
+    // Setup ended event listener dynamically
+    audio.addEventListener('ended', () => {
+      if (ch.queue.length > 0) {
+        const nextTrack = ch.queue.shift();
+        renderQueue(ch);
+        const trackIdx = ch.playlistTracks.findIndex(t => t.url === nextTrack.url);
+        if (trackIdx >= 0) {
+          playTrackAtIndex(ch, trackIdx);
+        } else {
+          ch.playlistTracks.push(nextTrack);
+          playTrackAtIndex(ch, ch.playlistTracks.length - 1);
+        }
+      } else if (ch.playlistTracks.length > 0 && ch.playlistIndex < ch.playlistTracks.length - 1) {
+        playNextTrack(ch);
+      }
+    });
+
+    return audio;
+  }
 
   function ensureContext(){
     if (!ctx){
@@ -2023,10 +2095,6 @@
         ch.gain.connect(ch.panner);
         ch.panner.connect(ch.analyser);
         ch.analyser.connect(ctx.destination);
-
-        // Bind media element to context (elements are already bound to ch.audioElement)
-        ch.mediaSourceNode = ctx.createMediaElementSource(ch.audioElement);
-        ch.mediaSourceNode.connect(ch.gain);
       });
     }
     return ctx.state === 'suspended' ? ctx.resume() : Promise.resolve();
@@ -2083,18 +2151,22 @@
     if (val.startsWith('file:') || ch.playlistIndex !== -1) {
       ch.mode = 'file';
       stopChannel(ch);
-      if (val.startsWith('file:')) {
-        const url = fileUrls[val];
-        if (ch.audioElement.src !== url) {
-          ch.audioElement.src = url;
+      if (!ch.audioElement) {
+        let url = '';
+        if (val.startsWith('file:')) {
+          url = fileUrls[val];
+        } else {
+          const track = ch.playlistTracks[ch.playlistIndex];
+          url = `/api/stream?url=${encodeURIComponent(track.url)}`;
         }
+        initAudioElement(ch, url);
       }
       ch.audioElement.play().catch(console.error);
     } else if (ch.mode === 'live') {
       connectLive(ch);
     } else {
       ch.mode = 'buffer';
-      if (ch.audioElement) ch.audioElement.pause();
+      cleanupAudioElement(ch);
       const buf = await renderTrack(val);
       const t0 = ctx.currentTime + 0.02;
       startChannel(ch, buf, t0, ch.offset);
@@ -2107,7 +2179,7 @@
     if (!ch.playing) return;
     const now = ctx.currentTime;
     if (ch.mode === 'file') {
-      ch.audioElement.pause();
+      if (ch.audioElement) ch.audioElement.pause();
     } else if (ch.mode === 'live') {
       disconnectLive(ch);
     } else {
@@ -2143,13 +2215,16 @@
       if (val.startsWith('file:') || chL.playlistIndex !== -1) {
         chL.mode = 'file';
         stopChannel(chL);
-        if (val.startsWith('file:')) chL.audioElement.src = fileUrls[val];
+        if (!chL.audioElement) {
+          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chL.playlistTracks[chL.playlistIndex].url)}`;
+          initAudioElement(chL, url);
+        }
         chL.audioElement.play().catch(console.error);
       } else if (chL.mode === 'live') {
         connectLive(chL);
       } else {
         chL.mode = 'buffer';
-        if (chL.audioElement) chL.audioElement.pause();
+        cleanupAudioElement(chL);
         startChannel(chL, bufL, t0, chL.offset);
       }
       chL.playing = true;
@@ -2159,13 +2234,16 @@
       if (val.startsWith('file:') || chR.playlistIndex !== -1) {
         chR.mode = 'file';
         stopChannel(chR);
-        if (val.startsWith('file:')) chR.audioElement.src = fileUrls[val];
+        if (!chR.audioElement) {
+          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chR.playlistTracks[chR.playlistIndex].url)}`;
+          initAudioElement(chR, url);
+        }
         chR.audioElement.play().catch(console.error);
       } else if (chR.mode === 'live') {
         connectLive(chR);
       } else {
         chR.mode = 'buffer';
-        if (chR.audioElement) chR.audioElement.pause();
+        cleanupAudioElement(chR);
         startChannel(chR, bufR, t0, chR.offset);
       }
       chR.playing = true;
@@ -2249,7 +2327,7 @@
     if (ch.live && val === ch.live.optionId){
       ch.mode = 'live';
       stopChannel(ch);
-      if (ch.audioElement) ch.audioElement.pause();
+      cleanupAudioElement(ch);
       if (chL.playing || chR.playing) connectLive(ch);
       return;
     }
@@ -2270,7 +2348,7 @@
 
     if (val === 'none') {
       stopChannel(ch);
-      if (ch.audioElement) ch.audioElement.pause();
+      cleanupAudioElement(ch);
       ch.playing = false;
       updateUI();
       return;
@@ -2279,12 +2357,12 @@
     if (val.startsWith('file:')) {
       ch.mode = 'file';
       stopChannel(ch);
-      ch.audioElement.src = fileUrls[val];
+      initAudioElement(ch, fileUrls[val]);
       ch.audioElement.play().catch(console.error);
       updateUI();
     } else {
       ch.mode = 'buffer';
-      if (ch.audioElement) ch.audioElement.pause();
+      cleanupAudioElement(ch);
       renderTrack(val).then(buf => {
         if (!ch.playing || ch.mode !== 'buffer') return;
         stopChannel(ch);
@@ -2388,18 +2466,13 @@
     const titleEl = document.getElementById('trackTitle' + side);
     if (titleEl) titleEl.textContent = track.title;
 
-    // Reset loop so playlists advance songs naturally
-    if (ch.audioElement) {
-      ch.audioElement.loop = false;
-      
-      // Route target to backend redirect stream endpoint
-      const streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}`;
-      ch.mode = 'file';
-      stopChannel(ch);
-      ch.audioElement.src = streamUrl;
-    }
-
     await ensureContext();
+
+    ch.mode = 'file';
+    stopChannel(ch);
+    const streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}`;
+    initAudioElement(ch, streamUrl);
+
     if (ch.audioElement) {
       ch.audioElement.play().catch(console.error);
     }
@@ -2566,12 +2639,7 @@
       handle.style.left = pct + '%';
     };
 
-    if (ch.audioElement) {
-      ch.audioElement.addEventListener('timeupdate', updateTimeline);
-      ch.audioElement.addEventListener('durationchange', () => {
-        totalEl.textContent = formatTime(ch.audioElement.duration);
-      });
-    }
+
 
     const getFraction = (e) => {
       const rect = bar.getBoundingClientRect();
@@ -2707,7 +2775,7 @@
     const trackLabel = audioTracks[0].label || 'Tab Capture';
     ch.lastTrack = ch.selectEl.value.startsWith('live') ? ch.lastTrack : ch.selectEl.value;
     stopChannel(ch);
-    if (ch.audioElement) ch.audioElement.pause();
+    cleanupAudioElement(ch);
 
     const node = ctx.createMediaStreamSource(stream);
     const optionId = 'live' + sideName;
@@ -2759,7 +2827,7 @@
       renderTrack(ch.selectEl.value).then(buf => {
         if (ch.playing && ch.mode === 'buffer'){
           stopChannel(ch);
-          if (ch.audioElement) ch.audioElement.pause();
+          cleanupAudioElement(ch);
           startChannel(ch, buf, ctx.currentTime + 0.03, 0);
           updateUI();
         }
@@ -3882,27 +3950,7 @@
   patchQueueButtons(chL);
   patchQueueButtons(chR);
 
-  // Override track-end behavior to check queue first
-  [chL, chR].forEach(ch => {
-    if (ch.audioElement) {
-      ch.audioElement.addEventListener('ended', () => {
-        if (ch.queue.length > 0) {
-          const nextTrack = ch.queue.shift();
-          renderQueue(ch);
-          const trackIdx = ch.playlistTracks.findIndex(t => t.url === nextTrack.url);
-          if (trackIdx >= 0) {
-            playTrackAtIndex(ch, trackIdx);
-          } else {
-            // Track not in current playlist, add it temporarily
-            ch.playlistTracks.push(nextTrack);
-            playTrackAtIndex(ch, ch.playlistTracks.length - 1);
-          }
-        } else if (ch.playlistTracks.length > 0 && ch.playlistIndex < ch.playlistTracks.length - 1) {
-          playNextTrack(ch);
-        }
-      });
-    }
-  });
+
 
   /* ==============================================
      FEATURE: NOW PLAYING — FULLSCREEN MODE
