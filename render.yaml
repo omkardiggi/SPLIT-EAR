@@ -3,7 +3,7 @@ services:
     name: split-ear
     env: python
     plan: free
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "pip install -r requirements.txt && curl -fsSL https://deno.land/install.sh | sh && cp $HOME/.deno/bin/deno .venv/bin/"
     startCommand: "gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app"
     healthCheckPath: /api/health
     envVars:
