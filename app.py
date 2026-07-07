@@ -28,6 +28,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def ensure_deno_installed():
+    """Ensure Deno is installed and available in PATH for yt-dlp to solve signatures."""
+    import shutil
+    import subprocess
+    
+    # 1. Add potential paths to PATH first
+    home_deno = os.path.join(os.path.expanduser('~'), '.deno', 'bin')
+    venv_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.venv', 'bin')
+    
+    for path in [home_deno, venv_bin]:
+        if os.path.exists(path) and path not in os.environ.get('PATH', ''):
+            os.environ['PATH'] = path + os.pathsep + os.environ.get('PATH', '')
+            
+    # 2. If deno is still not found, install it programmatically
+    if not shutil.which('deno'):
+        logger.info("Deno JS runtime not found. Attempting programmatic installation...")
+        try:
+            # Install deno using official script
+            result = subprocess.run(
+                "curl -fsSL https://deno.land/install.sh | sh",
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logger.info(f"Deno installation output: {result.stdout}")
+            
+            # Add home_deno to PATH again
+            if os.path.exists(home_deno) and home_deno not in os.environ.get('PATH', ''):
+                os.environ['PATH'] = home_deno + os.pathsep + os.environ.get('PATH', '')
+                
+            if shutil.which('deno'):
+                logger.info("Deno successfully installed and verified in PATH!")
+            else:
+                logger.warning("Deno installer finished but 'deno' executable is still not found in PATH.")
+        except Exception as e:
+            logger.error(f"Failed to install Deno: {e}")
+
+ensure_deno_installed()
+
 # ==========================================
 # Real-Time Multi-Device Sync Engine (SSE)
 # ==========================================
