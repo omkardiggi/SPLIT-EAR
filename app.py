@@ -758,7 +758,7 @@ def get_playlist():
                 'no_warnings': True,
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['ios', 'android', 'web_safari']
+                        'player_client': ['tv_downgraded', 'android_vr', 'web_safari', 'ios', 'android']
                     }
                 },
                 'http_headers': {
@@ -833,7 +833,7 @@ def get_stream():
         'quiet': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android', 'web_safari']
+                'player_client': ['tv_downgraded', 'android_vr', 'web_safari', 'ios', 'android']
             }
         },
         'http_headers': {
