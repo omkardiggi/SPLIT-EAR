@@ -1015,6 +1015,65 @@ def get_stream():
             if piped_mime:
                 content_type = piped_mime
 
+    # Step 3: If Piped fallback failed (or returned 403 / blocked), try SoundCloud search fallback!
+    if not stream_url:
+        logger.info("YouTube/Piped resolver failed. Attempting SoundCloud search fallback...")
+        video_id = _extract_yt_video_id(url)
+        title = "audio track"
+        
+        # If it was a search query, extract search query from URL as title
+        if url.startswith('ytsearch1:'):
+            title = url.replace('ytsearch1:', '')
+        elif url.startswith('ytsearch:'):
+            title = url.replace('ytsearch:', '')
+        elif video_id:
+            try:
+                # Query private.coffee to get the official YouTube title
+                r = http_requests.get(f"https://api.piped.private.coffee/streams/{video_id}", timeout=5)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get('title'):
+                        title = data.get('title')
+            except Exception as e:
+                logger.warning(f"Could not get video title for SoundCloud search: {e}")
+                
+        # Refined query builder: split on separators and filter out video descriptors
+        raw_parts = re.split(r'\||-|–|—|\[|\(', title)
+        clean_parts = []
+        video_descriptors = ['video', 'full', 'official', 'lyrical', 'lyrics', 'audio', 'song', 'hd', '4k', 'remaster', 'mv', 'clip']
+        for part in raw_parts:
+            part_clean = part.strip()
+            if not part_clean or len(part_clean) < 2:
+                continue
+            is_descriptor = any(word in part_clean.lower() for word in video_descriptors)
+            if not is_descriptor:
+                clean_parts.append(part_clean)
+                
+        if len(clean_parts) >= 2:
+            search_query_raw = f"{clean_parts[0]} {clean_parts[1]}"
+        elif len(clean_parts) == 1:
+            search_query_raw = clean_parts[0]
+        else:
+            search_query_raw = title
+            
+        # Clean title for search
+        search_query = _clean_search_query(search_query_raw)
+        logger.info(f"Searching SoundCloud for: '{search_query}'")
+        try:
+            ydl_opts_sc = {
+                'format': 'bestaudio/best',
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True
+            }
+            with yt_dlp.YoutubeDL(ydl_opts_sc) as ydl:
+                info = ydl.extract_info(f"scsearch1:{search_query}", download=False)
+                if 'entries' in info and len(info['entries']) > 0:
+                    stream_url = info['entries'][0].get('url')
+                    logger.info(f"SoundCloud search fallback SUCCESS: resolved to '{info['entries'][0].get('title')}'")
+        except Exception as e:
+            logger.warning(f"SoundCloud search fallback failed: {e}")
+
     if not stream_url:
         return jsonify({'error': 'Could not resolve stream URL from any source'}), 400
     
