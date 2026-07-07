@@ -1,6 +1,6 @@
 Flask==3.0.3
 Flask-Cors==4.0.0
-yt-dlp>=2026.03.17
+yt-dlp>=2026.3.17
 requests==2.32.2
 gunicorn==22.0.0
 python-dotenv
