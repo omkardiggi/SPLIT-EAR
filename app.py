@@ -484,28 +484,42 @@ def _try_page_scrape_fallback(url):
     """
     title = _scrape_page_title(url)
     
-    if not title:
-        title = _parse_url_path_slug(url)
-        if title:
-            logger.info(f"Page-scrape fallback: fall back to URL path parse '{title}'")
-            
-    if not title or len(title) < 3:
-        return None
+    clean = ""
+    if title:
+        # Clean social media titles (Instagram, Facebook)
+        title = _clean_social_media_title(title, url)
+        # Remove common generic website suffixes
+        clean = _clean_platform_suffix(title, [
+            r'\s*[-–—|·]\s*(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit|X|Tumblr).*$',
+            r'\s*on\s+(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit).*$',
+        ])
 
-    # Clean social media titles (Instagram, Facebook)
-    title = _clean_social_media_title(title, url)
-    
-    # Remove common generic website suffixes
-    clean = _clean_platform_suffix(title, [
-        r'\s*[-–—|·]\s*(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit|X|Tumblr).*$',
-        r'\s*on\s+(?:YouTube|Instagram|TikTok|Facebook|Twitter|Reddit).*$',
-    ])
-    
+    # If title scraping failed or clean title is empty/useless (e.g. "- YouTube"), fall back to URL slug
+    if not clean or len(clean.strip()) < 3:
+        slug = _parse_url_path_slug(url)
+        if slug:
+            logger.info(f"Page-scrape fallback: clean title is empty/short, using slug '{slug}'")
+            clean = slug
+
+    # If slug is also empty/short, use the last segment of the URL
+    if not clean or len(clean.strip()) < 3:
+        from urllib.parse import urlparse
+        try:
+            path = urlparse(url).path
+            segments = [s.strip() for s in path.split('/') if s.strip()]
+            if segments:
+                clean = segments[-1].replace('-', ' ').replace('_', ' ').strip().title()
+        except:
+            pass
+
+    if not clean or len(clean.strip()) < 3:
+        clean = "Audio Track"
+
     search_query = _clean_search_query(clean)
     if not search_query or len(search_query) < 3:
         search_query = clean[:100]
 
-    logger.info(f"Page-scrape fallback: '{title}' -> YouTube search '{search_query}'")
+    logger.info(f"Page-scrape fallback: '{title or 'N/A'}' -> YouTube search '{search_query}'")
 
     tracks = [{
         'id': f'scrape_{abs(hash(url)) % 100000}',
