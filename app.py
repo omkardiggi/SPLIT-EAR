@@ -866,7 +866,72 @@ def get_stream():
     url = request.args.get('url')
     if not url:
         return jsonify({'error': 'Missing url parameter'}), 400
-        
+
+    # --- Helper: extract YouTube video ID from various URL formats ---
+    def _extract_yt_video_id(u):
+        """Return a YouTube video ID if the URL is a YouTube link, else None."""
+        patterns = [
+            r'(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([A-Za-z0-9_-]{11})',
+        ]
+        for p in patterns:
+            m = re.search(p, u)
+            if m:
+                return m.group(1)
+        return None
+
+    # --- Helper: try Piped API instances as fallback for YouTube ---
+    PIPED_INSTANCES = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.adminforge.de',
+        'https://api.piped.projectsegfault.com',
+        'https://pipedapi.in.projectsegfault.com',
+        'https://pipedapi.leptons.xyz',
+    ]
+
+    def _try_piped_stream(video_id):
+        """Try multiple Piped API instances to get an audio stream URL."""
+        for instance in PIPED_INSTANCES:
+            try:
+                api_url = f"{instance}/streams/{video_id}"
+                logger.info(f"Piped fallback: trying {api_url}")
+                resp = http_requests.get(api_url, timeout=10)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                audio_streams = data.get('audioStreams', [])
+                if not audio_streams:
+                    continue
+                # Pick the best quality audio stream (highest bitrate)
+                best = max(audio_streams, key=lambda s: s.get('bitrate', 0))
+                stream_url = best.get('url')
+                if stream_url:
+                    logger.info(f"Piped fallback SUCCESS from {instance}: bitrate={best.get('bitrate')}, codec={best.get('codec')}")
+                    return stream_url, best.get('mimeType', 'audio/webm')
+            except Exception as e:
+                logger.warning(f"Piped instance {instance} failed: {e}")
+                continue
+        return None, None
+
+    # --- Helper: resolve ytsearch1: queries to a video ID ---
+    def _resolve_ytsearch_to_id(search_url):
+        """For ytsearch1:query URLs, use yt-dlp extract_flat to get the video ID."""
+        try:
+            with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True, 'no_warnings': True}) as ydl:
+                info = ydl.extract_info(search_url, download=False)
+                if 'entries' in info and len(info['entries']) > 0:
+                    entry = info['entries'][0]
+                    vid_id = entry.get('id')
+                    vid_url = entry.get('url') or entry.get('webpage_url')
+                    if vid_id:
+                        return vid_id, vid_url
+                    if vid_url:
+                        extracted_id = _extract_yt_video_id(vid_url)
+                        return extracted_id, vid_url
+        except Exception as e:
+            logger.warning(f"ytsearch resolve failed: {e}")
+        return None, None
+
+    # --- Main streaming logic ---
     ydl_opts = {
         'format': 'bestaudio/best',
         'skip_download': True,
@@ -877,59 +942,146 @@ def get_stream():
             }
         },
         'http_headers': {
-            'X-Forwarded-For': '192.168.1.1' # Simple spoofing to reduce block chance
+            'X-Forwarded-For': '192.168.1.1'
         }
     }
     
+    stream_url = None
+    content_type = 'audio/webm'
+
+    # Step 1: Try yt-dlp first (works for non-YouTube sites and unblocked IPs)
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             stream_url = info.get('url')
             
-            # For ytsearch1: queries, the url is inside entries[0]
             if not stream_url and 'entries' in info and len(info['entries']) > 0:
                 stream_url = info['entries'][0].get('url')
                 
-            if not stream_url:
-                return jsonify({'error': 'Could not resolve stream URL'}), 400
-            
-            headers = {}
-            range_header = request.headers.get('Range', None)
-            if range_header:
-                headers['Range'] = range_header
-                
-            headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            
-            req = http_requests.get(stream_url, headers=headers, stream=True, timeout=15)
-            
-            def generate():
-                for chunk in req.iter_content(chunk_size=65536): # 64KB chunks for optimized streaming
-                    yield chunk
-            
-            resp_headers = {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            }
-            
-            if 'Content-Type' in req.headers:
-                resp_headers['Content-Type'] = req.headers['Content-Type']
-            if 'Content-Length' in req.headers:
-                resp_headers['Content-Length'] = req.headers['Content-Length']
-            if 'Content-Range' in req.headers:
-                resp_headers['Content-Range'] = req.headers['Content-Range']
-            if 'Accept-Ranges' in req.headers:
-                resp_headers['Accept-Ranges'] = req.headers['Accept-Ranges']
-                
-            return Response(
-                stream_with_context(generate()),
-                status=req.status_code,
-                headers=resp_headers
-            )
-            
+            if stream_url:
+                logger.info(f"yt-dlp stream resolved successfully for: {url}")
     except Exception as e:
-        logger.error(f"Error getting stream: {str(e)}")
+        logger.warning(f"yt-dlp stream failed for {url}: {e}")
+
+    # Step 2: If yt-dlp failed, try Piped API for YouTube content
+    if not stream_url:
+        video_id = _extract_yt_video_id(url)
+        
+        # If it's a ytsearch1: query, resolve it to a video ID first
+        if not video_id and url.startswith('ytsearch'):
+            video_id, resolved_url = _resolve_ytsearch_to_id(url)
+            if not video_id and resolved_url:
+                video_id = _extract_yt_video_id(resolved_url)
+        
+        if video_id:
+            logger.info(f"Trying Piped API fallback for video ID: {video_id}")
+            stream_url, piped_mime = _try_piped_stream(video_id)
+            if piped_mime:
+                content_type = piped_mime
+
+    if not stream_url:
+        return jsonify({'error': 'Could not resolve stream URL from any source'}), 400
+    
+    # Step 3: Proxy the resolved stream to the client
+    try:
+        headers = {}
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            headers['Range'] = range_header
+            
+        headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        
+        req = http_requests.get(stream_url, headers=headers, stream=True, timeout=15)
+        
+        def generate():
+            for chunk in req.iter_content(chunk_size=65536):
+                yield chunk
+        
+        resp_headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        }
+        
+        if 'Content-Type' in req.headers:
+            resp_headers['Content-Type'] = req.headers['Content-Type']
+        else:
+            resp_headers['Content-Type'] = content_type
+        if 'Content-Length' in req.headers:
+            resp_headers['Content-Length'] = req.headers['Content-Length']
+        if 'Content-Range' in req.headers:
+            resp_headers['Content-Range'] = req.headers['Content-Range']
+        if 'Accept-Ranges' in req.headers:
+            resp_headers['Accept-Ranges'] = req.headers['Accept-Ranges']
+            
+        return Response(
+            stream_with_context(generate()),
+            status=req.status_code,
+            headers=resp_headers
+        )
+
+    except Exception as e:
+        logger.error(f"Error proxying stream: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+# ==========================================
+# Diagnostic Fallbacks Route
+# ==========================================
+
+@app.route('/api/test-fallbacks', methods=['GET'])
+def test_fallbacks():
+    results = {}
+    video_id = 'II2EO3Nw4m0' # Badtameez Dil
+    
+    # 1. Test Invidious Instances list API
+    try:
+        r = http_requests.get('https://api.invidious.io/instances.json', timeout=5)
+        results['invidious_instances_api'] = {
+            'status': r.status_code,
+            'length': len(r.json()) if r.status_code == 200 else 0
+        }
+    except Exception as e:
+        results['invidious_instances_api'] = {'error': str(e)}
+        
+    # 2. Test direct Invidious URL
+    invidious_tests = [
+        'https://inv.nadeko.net',
+        'https://invidious.nerdvpn.de',
+        'https://yt.chocolatemoo53.com',
+        'https://invidious.tiekoetter.com',
+        'https://invidious.f5.si',
+    ]
+    results['invidious_nodes'] = {}
+    for node in invidious_tests:
+        try:
+            r = http_requests.get(f"{node}/api/v1/videos/{video_id}", timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
+            results['invidious_nodes'][node] = {
+                'status': r.status_code,
+                'has_audio': ('adaptiveFormats' in r.json()) if r.status_code == 200 else False
+            }
+        except Exception as e:
+            results['invidious_nodes'][node] = {'error': str(e)}
+            
+    # 3. Test Piped Nodes
+    piped_tests = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.leptons.xyz',
+        'https://pipedapi-libre.kavin.rocks',
+        'https://api.piped.yt',
+        'https://api.piped.private.coffee',
+    ]
+    results['piped_nodes'] = {}
+    for node in piped_tests:
+        try:
+            r = http_requests.get(f"{node}/streams/{video_id}", timeout=5)
+            results['piped_nodes'][node] = {
+                'status': r.status_code,
+                'has_audio': ('audioStreams' in r.json()) if r.status_code == 200 else False
+            }
+        except Exception as e:
+            results['piped_nodes'][node] = {'error': str(e)}
+            
+    return jsonify(results)
 
 # ==========================================
 # Multi-Device Sync API (Multi-Room Update)
