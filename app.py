@@ -516,12 +516,36 @@ def _clean_search_query(query):
     return query.strip()
 
 
+def _extract_yt_video_id(u):
+    """Return a YouTube video ID if the URL is a YouTube link, else None."""
+    patterns = [
+        r'(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([A-Za-z0-9_-]{11})',
+    ]
+    for p in patterns:
+        m = re.search(p, u)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _try_page_scrape_fallback(url):
     """
     Last-resort fallback: scrape ANY page's title/og:title and use it
     as a YouTube search query. Works for blogs, news articles linking to
     songs, social media posts with song names, etc.
     """
+    # 1. If it's a YouTube URL, extract the video ID and use it directly (preserving case!)
+    yt_id = _extract_yt_video_id(url)
+    if yt_id:
+        logger.info(f"Page-scrape fallback: detected YouTube URL, using exact case-sensitive ID '{yt_id}'")
+        tracks = [{
+            'id': yt_id,
+            'title': yt_id,
+            'duration': 0,
+            'url': f'https://www.youtube.com/watch?v={yt_id}'
+        }]
+        return {'playlistTitle': yt_id, 'tracks': tracks}
+
     title = _scrape_page_title(url)
     
     clean = ""
@@ -867,24 +891,11 @@ def get_stream():
     if not url:
         return jsonify({'error': 'Missing url parameter'}), 400
 
-    # --- Helper: extract YouTube video ID from various URL formats ---
-    def _extract_yt_video_id(u):
-        """Return a YouTube video ID if the URL is a YouTube link, else None."""
-        patterns = [
-            r'(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([A-Za-z0-9_-]{11})',
-        ]
-        for p in patterns:
-            m = re.search(p, u)
-            if m:
-                return m.group(1)
-        return None
-
     # --- Helper: try Piped API instances as fallback for YouTube ---
     PIPED_INSTANCES = [
+        'https://api.piped.private.coffee',
         'https://pipedapi.kavin.rocks',
         'https://pipedapi.adminforge.de',
-        'https://api.piped.projectsegfault.com',
-        'https://pipedapi.in.projectsegfault.com',
         'https://pipedapi.leptons.xyz',
     ]
 
