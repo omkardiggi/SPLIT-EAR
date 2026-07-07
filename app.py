@@ -956,10 +956,23 @@ def get_stream():
                     continue
                 # Pick the best quality audio stream (highest bitrate)
                 best = max(audio_streams, key=lambda s: s.get('bitrate', 0))
-                stream_url = best.get('url')
-                if stream_url:
-                    logger.info(f"Piped fallback SUCCESS from {instance} (video_fallback={is_video_fallback}): bitrate={best.get('bitrate')}, mime={best.get('mimeType')}")
-                    return stream_url, best.get('mimeType', 'audio/webm')
+                temp_url = best.get('url')
+                if temp_url:
+                    # Test if the stream URL is actually reachable and not 403/blocked
+                    try:
+                        test_headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        }
+                        test_r = http_requests.get(temp_url, headers=test_headers, stream=True, timeout=5)
+                        status = test_r.status_code
+                        test_r.close()
+                        if status in [200, 206]:
+                            logger.info(f"Piped fallback SUCCESS from {instance} (video_fallback={is_video_fallback}): status={status}, mime={best.get('mimeType')}")
+                            return temp_url, best.get('mimeType', 'audio/webm')
+                        else:
+                            logger.warning(f"Piped stream URL from {instance} returned blocked status: {status}")
+                    except Exception as test_err:
+                        logger.warning(f"Failed to test Piped stream URL from {instance}: {test_err}")
             except Exception as e:
                 logger.warning(f"Piped instance {instance} failed: {e}")
                 continue
