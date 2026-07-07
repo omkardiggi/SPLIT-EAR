@@ -1172,6 +1172,34 @@ def resolve_yt_id():
     return jsonify({'error': 'Could not resolve YouTube video ID'}), 404
 
 
+@app.route('/api/test-sc-resolve', methods=['GET'])
+def test_sc_resolve():
+    query = request.args.get('query', 'Pavazha Malli')
+    result = {}
+    try:
+        import yt_dlp
+        ydl_opts_sc = {
+            'format': 'bestaudio/best',
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True
+        }
+        with yt_dlp.YoutubeDL(ydl_opts_sc) as ydl:
+            info = ydl.extract_info(f"scsearch1:{query}", download=False)
+            if 'entries' in info and len(info['entries']) > 0:
+                entry = info['entries'][0]
+                result['success'] = True
+                result['title'] = entry.get('title')
+                result['url'] = entry.get('url')
+            else:
+                result['success'] = False
+                result['error'] = 'No entries found'
+    except Exception as e:
+        result['success'] = False
+        result['error'] = str(e)
+    return jsonify(result)
+
+
 # ==========================================
 # Diagnostic Fallbacks Route
 # ==========================================
