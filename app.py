@@ -1074,7 +1074,7 @@ def get_stream():
         logger.info(f"Searching SoundCloud for: '{search_query}'")
         try:
             ydl_opts_sc = {
-                'format': 'bestaudio/best',
+                'format': 'bestaudio[protocol=http]/bestaudio/best',
                 'skip_download': True,
                 'quiet': True,
                 'no_warnings': True
@@ -1179,7 +1179,7 @@ def test_sc_resolve():
     try:
         import yt_dlp
         ydl_opts_sc = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[protocol=http]/bestaudio/best',
             'skip_download': True,
             'quiet': True,
             'no_warnings': True
