@@ -910,13 +910,21 @@ def get_stream():
                     continue
                 data = resp.json()
                 audio_streams = data.get('audioStreams', [])
+                
+                # Fallback to combined video streams if no audio-only streams are returned
+                is_video_fallback = False
+                if not audio_streams:
+                    video_streams = data.get('videoStreams', [])
+                    audio_streams = [s for s in video_streams if not s.get('videoOnly', False)]
+                    is_video_fallback = True
+                    
                 if not audio_streams:
                     continue
                 # Pick the best quality audio stream (highest bitrate)
                 best = max(audio_streams, key=lambda s: s.get('bitrate', 0))
                 stream_url = best.get('url')
                 if stream_url:
-                    logger.info(f"Piped fallback SUCCESS from {instance}: bitrate={best.get('bitrate')}, codec={best.get('codec')}")
+                    logger.info(f"Piped fallback SUCCESS from {instance} (video_fallback={is_video_fallback}): bitrate={best.get('bitrate')}, mime={best.get('mimeType')}")
                     return stream_url, best.get('mimeType', 'audio/webm')
             except Exception as e:
                 logger.warning(f"Piped instance {instance} failed: {e}")
