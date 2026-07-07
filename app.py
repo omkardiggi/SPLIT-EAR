@@ -542,8 +542,32 @@ def get_playlist():
                 logger.info(f"Spotify (Scraper): successfully extracted {len(result['tracks'])} tracks")
                 return jsonify(result)
                 
-            # If scraper fails, fall back to official Web API (requires valid client ID/secret + premium developer subscription)
-            logger.info("Spotify: scraper failed, falling back to official Web API")
+            # If scraper fails, try public oEmbed fallback (especially useful for tracks which Spotify embed blocks)
+            logger.info("Spotify: scraper failed, trying oEmbed fallback")
+            try:
+                oembed_url = f"https://open.spotify.com/oembed?url={url}"
+                oembed_resp = http_requests.get(oembed_url, timeout=10)
+                if oembed_resp.status_code == 200:
+                    oembed_data = oembed_resp.json()
+                    track_title = oembed_data.get('title')
+                    if track_title:
+                        match = re.search(r'(playlist|album|track)[/:]([a-zA-Z0-9]+)', url)
+                        track_id = match.group(2) if match else 'track'
+                        logger.info(f"Spotify (oEmbed): successfully extracted title '{track_title}'")
+                        return jsonify({
+                            'playlistTitle': track_title,
+                            'tracks': [{
+                                'id': track_id,
+                                'title': track_title,
+                                'duration': 0,
+                                'url': f'ytsearch1:{track_title}'
+                            }]
+                        })
+            except Exception as oembed_err:
+                logger.warning(f"Spotify oEmbed fallback failed: {oembed_err}")
+
+            # If both scraper and oEmbed fail, fall back to official Web API (requires credentials)
+            logger.info("Spotify: scraper and oEmbed failed, falling back to official Web API")
             client_id = os.environ.get('SPOTIFY_CLIENT_ID')
             client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
             
@@ -698,15 +722,7 @@ def get_playlist():
                 return jsonify(result)
             return jsonify({'error': 'Could not extract song info from Amazon Music. Try pasting a direct song link.'}), 400
 
-        # --- JioSaavn → Scrape page metadata → YouTube search ---
-        if 'jiosaavn.com' in url or 'saavn.com' in url:
-            result = _handle_drm_platform(url, 'JioSaavn', [
-                r'\s*[-–—|]\s*JioSaavn.*$',
-                r'\s+on\s+JioSaavn.*$',
-            ])
-            if result and result.get('tracks'):
-                return jsonify(result)
-            return jsonify({'error': 'Could not extract song info from JioSaavn. Try pasting a direct song link.'}), 400
+        # JioSaavn URLs fall through to yt-dlp native extraction below
 
         # --- Gaana → Scrape page metadata → YouTube search ---
         if 'gaana.com' in url:
@@ -726,6 +742,11 @@ def get_playlist():
                 'extract_flat': True,
                 'quiet': True,
                 'no_warnings': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['ios', 'android', 'web_safari']
+                    }
+                },
                 'http_headers': {
                     'X-Forwarded-For': '192.168.1.1'
                 }
@@ -796,6 +817,11 @@ def get_stream():
         'format': 'bestaudio/best',
         'skip_download': True,
         'quiet': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web_safari']
+            }
+        },
         'http_headers': {
             'X-Forwarded-For': '192.168.1.1' # Simple spoofing to reduce block chance
         }
