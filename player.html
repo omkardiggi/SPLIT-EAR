@@ -2470,7 +2470,95 @@
 
     ch.mode = 'file';
     stopChannel(ch);
-    const streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}`;
+    
+    // Client-side Piped stream resolver to bypass backend datacenter IP blocks
+    async function resolveYoutubeStreamClientSide(url) {
+      let videoId = null;
+      const patterns = [
+        /(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([A-Za-z0-9_-]{11})/
+      ];
+      for (const p of patterns) {
+        const match = url.match(p);
+        if (match) {
+          videoId = match[1];
+          break;
+        }
+      }
+
+      // If no direct ID, resolve via backend helper (works for search queries)
+      if (!videoId) {
+        try {
+          console.log("Resolving non-direct URL via backend:", url);
+          const res = await fetch(`/api/resolve-yt-id?url=${encodeURIComponent(url)}`);
+          if (res.ok) {
+            const data = await res.json();
+            videoId = data.videoId;
+          }
+        } catch (err) {
+          console.warn("Backend resolution failed:", err);
+        }
+      }
+
+      if (!videoId) return null;
+
+      // Piped proxy endpoints (CORS is open, binding resolves to client's residential IP)
+      const PIPED_INSTANCES = [
+        'https://api.piped.private.coffee',
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.leptons.xyz',
+        'https://pipedapi.adminforge.de'
+      ];
+
+      for (const instance of PIPED_INSTANCES) {
+        try {
+          const res = await fetch(`${instance}/streams/${videoId}`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          
+          let audioStreams = data.audioStreams || [];
+          let isVideoFallback = false;
+          
+          // Combined format fallback (mp4 streams containing audio) if audio-only fails
+          if (audioStreams.length === 0) {
+            const videoStreams = data.videoStreams || [];
+            audioStreams = videoStreams.filter(s => !s.videoOnly);
+            isVideoFallback = true;
+          }
+          
+          if (audioStreams.length > 0) {
+            const best = audioStreams.reduce((prev, current) => 
+              ((prev.bitrate || 0) > (current.bitrate || 0)) ? prev : current
+            );
+            if (best && best.url) {
+              console.log(`Resolved stream via ${instance} (video_fallback=${isVideoFallback}):`, best.url);
+              return best.url;
+            }
+          }
+        } catch (err) {
+          console.warn(`Piped instance ${instance} failed:`, err);
+        }
+      }
+      return null;
+    }
+
+    let streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}`;
+    const isYoutube = track.url.includes('youtube.com') || 
+                      track.url.includes('youtu.be') || 
+                      track.url.startsWith('ytsearch');
+
+    if (isYoutube) {
+      if (titleEl) titleEl.textContent = "Resolving... " + track.title;
+      try {
+        const resolved = await resolveYoutubeStreamClientSide(track.url);
+        if (resolved) {
+          streamUrl = resolved;
+        }
+      } catch (e) {
+        console.error("Error resolving stream client-side:", e);
+      }
+      if (titleEl) titleEl.textContent = track.title;
+    }
+
     initAudioElement(ch, streamUrl);
 
     if (ch.audioElement) {

@@ -528,23 +528,57 @@ def _extract_yt_video_id(u):
     return None
 
 
+def _resolve_ytsearch_to_id(search_url):
+    """For ytsearch1:query URLs, use yt-dlp extract_flat to get the video ID."""
+    try:
+        with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True, 'no_warnings': True}) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+            if 'entries' in info and len(info['entries']) > 0:
+                entry = info['entries'][0]
+                vid_id = entry.get('id')
+                vid_url = entry.get('url') or entry.get('webpage_url')
+                if vid_id:
+                    return vid_id, vid_url
+                if vid_url:
+                    extracted_id = _extract_yt_video_id(vid_url)
+                    return extracted_id, vid_url
+    except Exception as e:
+        logger.warning(f"ytsearch resolve failed: {e}")
+    return None, None
+
+
 def _try_page_scrape_fallback(url):
     """
     Last-resort fallback: scrape ANY page's title/og:title and use it
     as a YouTube search query. Works for blogs, news articles linking to
     songs, social media posts with song names, etc.
     """
-    # 1. If it's a YouTube URL, extract the video ID and use it directly (preserving case!)
+    # 1. If it's a YouTube URL, extract the video ID, resolve metadata via Piped, and use direct watch URL (preserving case!)
     yt_id = _extract_yt_video_id(url)
     if yt_id:
-        logger.info(f"Page-scrape fallback: detected YouTube URL, using exact case-sensitive ID '{yt_id}'")
+        logger.info(f"Page-scrape fallback: detected YouTube URL, resolving metadata via Piped API for ID '{yt_id}'")
+        title = yt_id
+        duration = 0
+        try:
+            # Query private.coffee to get the official YouTube title and duration
+            r = http_requests.get(f"https://api.piped.private.coffee/streams/{yt_id}", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('title'):
+                    title = data.get('title')
+                if data.get('duration'):
+                    duration = data.get('duration')
+                logger.info(f"Piped metadata success: title='{title}', duration={duration}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch YouTube title from Piped API: {e}")
+
         tracks = [{
             'id': yt_id,
-            'title': yt_id,
-            'duration': 0,
+            'title': title,
+            'duration': duration,
             'url': f'https://www.youtube.com/watch?v={yt_id}'
         }]
-        return {'playlistTitle': yt_id, 'tracks': tracks}
+        return {'playlistTitle': title, 'tracks': tracks}
 
     title = _scrape_page_title(url)
     
@@ -931,24 +965,7 @@ def get_stream():
                 continue
         return None, None
 
-    # --- Helper: resolve ytsearch1: queries to a video ID ---
-    def _resolve_ytsearch_to_id(search_url):
-        """For ytsearch1:query URLs, use yt-dlp extract_flat to get the video ID."""
-        try:
-            with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True, 'no_warnings': True}) as ydl:
-                info = ydl.extract_info(search_url, download=False)
-                if 'entries' in info and len(info['entries']) > 0:
-                    entry = info['entries'][0]
-                    vid_id = entry.get('id')
-                    vid_url = entry.get('url') or entry.get('webpage_url')
-                    if vid_id:
-                        return vid_id, vid_url
-                    if vid_url:
-                        extracted_id = _extract_yt_video_id(vid_url)
-                        return extracted_id, vid_url
-        except Exception as e:
-            logger.warning(f"ytsearch resolve failed: {e}")
-        return None, None
+
 
     # --- Main streaming logic ---
     ydl_opts = {
@@ -1042,6 +1059,46 @@ def get_stream():
     except Exception as e:
         logger.error(f"Error proxying stream: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+# ==========================================
+# YouTube ID Resolution API (Client-Side Streaming Help)
+# ==========================================
+
+@app.route('/api/resolve-yt-id', methods=['GET'])
+def resolve_yt_id():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({'error': 'Missing url parameter'}), 400
+        
+    # 1. Extract direct video ID first (preserving case!)
+    video_id = _extract_yt_video_id(url)
+    if video_id:
+        return jsonify({'videoId': video_id})
+        
+    # 2. If it is a search query, resolve it to a video ID
+    if url.startswith('ytsearch'):
+        video_id, resolved_url = _resolve_ytsearch_to_id(url)
+        if not video_id and resolved_url:
+            video_id = _extract_yt_video_id(resolved_url)
+        if video_id:
+            return jsonify({'videoId': video_id})
+            
+    # 3. Fallback: try flat extraction
+    try:
+        with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True, 'no_warnings': True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            vid_id = info.get('id')
+            if vid_id and len(vid_id) == 11:
+                return jsonify({'videoId': vid_id})
+            if 'entries' in info and len(info['entries']) > 0:
+                vid_id = info['entries'][0].get('id')
+                if vid_id:
+                    return jsonify({'videoId': vid_id})
+    except Exception as e:
+        logger.warning(f"resolve_yt_id extract_flat failed: {e}")
+        
+    return jsonify({'error': 'Could not resolve YouTube video ID'}), 404
+
 
 # ==========================================
 # Diagnostic Fallbacks Route
