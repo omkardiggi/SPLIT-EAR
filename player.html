@@ -6,6 +6,7 @@
 <title>SPLIT//EAR — Cyberpunk Dual Channel Player</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Michroma&family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
   :root{
     --bg:#040509;
@@ -1998,6 +1999,10 @@
 
   // Helper to cleanup any existing dynamic audio element and its source node
   function cleanupAudioElement(ch) {
+    if (ch.hls) {
+      try { ch.hls.destroy(); } catch(e){}
+      ch.hls = null;
+    }
     if (ch.audioElement) {
       try { ch.audioElement.pause(); } catch(e){}
       ch.audioElement.src = '';
@@ -2018,7 +2023,27 @@
     const audio = document.createElement('audio');
     audio.loop = (ch.playlistIndex === -1);
     audio.crossOrigin = 'anonymous';
-    audio.src = srcUrl;
+    
+    // Play HLS (.m3u8) streams via hls.js for Chrome/Firefox compatibility
+    const isHls = srcUrl.includes('.m3u8') || srcUrl.includes('playlist.m3u8') || srcUrl.includes('soundcloud.cloud');
+    
+    if (isHls && typeof Hls !== 'undefined') {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          xhrSetup: function (xhr, url) {
+            xhr.withCredentials = false;
+          }
+        });
+        hls.loadSource(srcUrl);
+        hls.attachMedia(audio);
+        ch.hls = hls;
+      } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+        audio.src = srcUrl;
+      }
+    } else {
+      audio.src = srcUrl;
+    }
+
     if (typeof syncMode !== 'undefined' && syncMode === 'remote') {
       audio.muted = true;
     }
