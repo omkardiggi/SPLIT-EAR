@@ -4387,6 +4387,16 @@
         if (!outputSel.disabled || outputSel.options.length > 1) listOutputs().catch(() => { });
       });
 
+      // Unique Client ID for multi-user coordination (must be declared before updateUI)
+      const clientId = sessionStorage.getItem('clientId') || 'client_' + Math.random().toString(36).substring(2, 7);
+      sessionStorage.setItem('clientId', clientId);
+
+      let leftOwner = null;
+      let rightOwner = null;
+      let ownedEarbud = null; // 'left', 'right', or null
+      let roomClients = [];
+      const approvedRemotes = new Set();
+
       updateUI();
 
       /* ==============================================
@@ -4398,16 +4408,6 @@
       if (roomIdDisplay) {
         roomIdDisplay.textContent = roomId;
       }
-
-      // Unique Client ID for multi-user coordination
-      const clientId = sessionStorage.getItem('clientId') || 'client_' + Math.random().toString(36).substring(2, 7);
-      sessionStorage.setItem('clientId', clientId);
-
-      let leftOwner = null;
-      let rightOwner = null;
-      let ownedEarbud = null; // 'left', 'right', or null
-      let roomClients = [];
-      const approvedRemotes = new Set();
 
       const urlParamsMode = new URLSearchParams(window.location.search);
       let syncMode = urlParamsMode.get('mode') || 'gateway';  // 'gateway' = plays audio | 'remote' = control only
