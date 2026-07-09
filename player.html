@@ -4409,8 +4409,8 @@
       let roomClients = [];
       const approvedRemotes = new Set();
 
-      const urlParams = new URLSearchParams(window.location.search);
-      let syncMode = urlParams.get('mode') || 'gateway';  // 'gateway' = plays audio | 'remote' = control only
+      const urlParamsMode = new URLSearchParams(window.location.search);
+      let syncMode = urlParamsMode.get('mode') || 'gateway';  // 'gateway' = plays audio | 'remote' = control only
       let syncConnected = false;
       let syncEventSource = null;
       let ignoreSyncUntil = 0;  // Timestamp: ignore inbound events that are echoes of our own action
