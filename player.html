@@ -4897,8 +4897,12 @@
             break;
 
           case 'requestAccess':
-            if (syncMode === 'gateway' && data.clientId !== clientId && !approvedRemotes.has(data.clientId)) {
-              showAccessRequestModal(data.clientId);
+            if (syncMode === 'gateway' && data.clientId !== clientId) {
+              if (approvedRemotes.has(data.clientId)) {
+                emitSync('approveAccess', null, { targetClientId: data.clientId });
+              } else {
+                showAccessRequestModal(data.clientId);
+              }
             }
             break;
 
