@@ -528,6 +528,29 @@ def _extract_yt_video_id(u):
     return None
 
 
+def _get_youtube_oembed_title(url):
+    """
+    Get the official YouTube video title using the public oEmbed API.
+    Bypasses YouTube IP block restrictions on Render.
+    """
+    if len(url) == 11 and re.match(r'^[A-Za-z0-9_-]{11}$', url):
+        url = f"https://www.youtube.com/watch?v={url}"
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+        resp = http_requests.get(oembed_url, timeout=8)
+        if resp.status_code == 200:
+            data = resp.json()
+            title = data.get('title')
+            author = data.get('author_name')
+            if title:
+                if author:
+                    return f"{title} {author}"
+                return title
+    except Exception as e:
+        logger.warning(f"YouTube oEmbed metadata fetch failed: {e}")
+    return None
+
+
 def _resolve_ytsearch_to_id(search_url):
     """For ytsearch1:query URLs, use yt-dlp extract_flat to get the video ID."""
     try:
@@ -846,6 +869,23 @@ def get_playlist():
                 return jsonify(result)
             return jsonify({'error': 'Could not extract song info from Gaana. Try pasting a direct song link.'}), 400
 
+        # --- YouTube video URL → oEmbed metadata lookup first ---
+        yt_id = _extract_yt_video_id(url)
+        if yt_id:
+            logger.info(f"YouTube: detected single video URL, resolving metadata via oEmbed")
+            oembed_title = _get_youtube_oembed_title(url)
+            if oembed_title:
+                logger.info(f"YouTube oEmbed success: '{oembed_title}'")
+                return jsonify({
+                    'playlistTitle': oembed_title,
+                    'tracks': [{
+                        'id': yt_id,
+                        'title': oembed_title,
+                        'duration': 0,
+                        'url': f'https://www.youtube.com/watch?v={yt_id}'
+                    }]
+                })
+
         # --- All other URLs: yt-dlp first, then page-scrape fallback ---
         # yt-dlp natively supports 1700+ sites including YouTube, SoundCloud,
         # Instagram, TikTok, Twitter/X, Facebook, Reddit, Bandcamp, Vimeo, etc.
@@ -919,9 +959,50 @@ def get_playlist():
         logger.error(f"Error extracting playlist: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+def _clean_title_for_search(title):
+    if not title:
+        return ""
+        
+    # Remove bracketed descriptors first
+    patterns_to_remove = [
+        r'\([^)]*(?:official|video|lyrics|audio|full|hd|remaster|lyrical|mv|clip|screen|live|visualizer|music)[^)]*\)',
+        r'\[[^\]]*(?:official|video|lyrics|audio|full|hd|remaster|lyrical|mv|clip|screen|live|visualizer|music)[^\]]*\]',
+    ]
+    cleaned_title = title
+    for p in patterns_to_remove:
+        cleaned_title = re.sub(p, '', cleaned_title, flags=re.IGNORECASE)
+        
+    # Split on common separators
+    parts = re.split(r'[||\-\–\—]', cleaned_title)
+    clean_parts = []
+    for part in parts:
+        p_clean = part.strip()
+        # Remove remaining individual descriptor words
+        p_clean = re.sub(r'\b(?:official|video|lyric|lyrics|audio|full\s+song|song|hd|4k|remaster|mv|clip|screen|hq|visualizer|live)\b', '', p_clean, flags=re.IGNORECASE)
+        p_clean = re.sub(r'\s+', ' ', p_clean).strip()
+        if len(p_clean) >= 2:
+            clean_parts.append(p_clean)
+            
+    if len(clean_parts) >= 2:
+        query = f"{clean_parts[0]} {clean_parts[1]}"
+    elif len(clean_parts) == 1:
+        query = clean_parts[0]
+    else:
+        query = title
+        
+    # Remove extra special characters
+    query = re.sub(r'[\(\)\[\]\:\,\.\"\']', ' ', query)
+    query = re.sub(r'\s+', ' ', query).strip()
+    
+    if len(query) > 80:
+        query = query[:80]
+    return query
+
+
 @app.route('/api/stream', methods=['GET'])
 def get_stream():
     url = request.args.get('url')
+    title_param = request.args.get('title')
     if not url:
         return jsonify({'error': 'Missing url parameter'}), 400
 
@@ -998,19 +1079,64 @@ def get_stream():
     stream_url = None
     content_type = 'audio/webm'
 
-    # Step 1: Try yt-dlp first (works for non-YouTube sites and unblocked IPs)
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            stream_url = info.get('url')
+    # Check if this is a YouTube or search query URL
+    is_youtube = ('youtube.com' in url or 'youtu.be' in url or url.startswith('ytsearch'))
+    if is_youtube:
+        logger.info(f"YouTube/Search URL detected: {url}. Attempting immediate SoundCloud search fallback.")
+        resolved_title = title_param
+        if not resolved_title:
+            video_id = _extract_yt_video_id(url)
+            if video_id:
+                resolved_title = _get_youtube_oembed_title(url)
+            elif url.startswith('ytsearch1:'):
+                resolved_title = url.replace('ytsearch1:', '')
+            elif url.startswith('ytsearch:'):
+                resolved_title = url.replace('ytsearch:', '')
+        
+        if resolved_title:
+            search_query = _clean_title_for_search(resolved_title)
+            logger.info(f"Searching SoundCloud for: '{search_query}'")
             
-            if not stream_url and 'entries' in info and len(info['entries']) > 0:
-                stream_url = info['entries'][0].get('url')
+            ydl_opts_sc = {
+                'format': 'bestaudio[protocol=http]/bestaudio/best',
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+            }
+            
+            for attempt in range(3):
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts_sc) as ydl:
+                        info = ydl.extract_info(f"scsearch1:{search_query}", download=False)
+                        if 'entries' in info and len(info['entries']) > 0:
+                            stream_url = info['entries'][0].get('url')
+                            logger.info(f"SoundCloud search fallback SUCCESS: resolved to '{info['entries'][0].get('title')}' on attempt {attempt+1}")
+                            content_type = 'audio/mpeg'
+                            break
+                except Exception as sc_err:
+                    logger.warning(f"SoundCloud search fallback attempt {attempt+1} failed: {sc_err}")
+                    if attempt < 2:
+                        time.sleep(1.5)
+
+    # Step 1: Try yt-dlp first (works for non-YouTube sites and unblocked IPs)
+    if not stream_url:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                stream_url = info.get('url')
                 
-            if stream_url:
-                logger.info(f"yt-dlp stream resolved successfully for: {url}")
-    except Exception as e:
-        logger.warning(f"yt-dlp stream failed for {url}: {e}")
+                if not stream_url and 'entries' in info and len(info['entries']) > 0:
+                    stream_url = info['entries'][0].get('url')
+                    
+                if stream_url:
+                    logger.info(f"yt-dlp stream resolved successfully for: {url}")
+        except Exception as e:
+            logger.warning(f"yt-dlp stream failed for {url}: {e}")
 
     # Step 2: If yt-dlp failed, try Piped API for YouTube content
     if not stream_url:

@@ -2182,7 +2182,7 @@
           url = fileUrls[val];
         } else {
           const track = ch.playlistTracks[ch.playlistIndex];
-          url = `/api/stream?url=${encodeURIComponent(track.url)}`;
+          url = `/api/stream?url=${encodeURIComponent(track.url)}&title=${encodeURIComponent(track.title || '')}`;
         }
         initAudioElement(ch, url);
       }
@@ -2241,7 +2241,7 @@
         chL.mode = 'file';
         stopChannel(chL);
         if (!chL.audioElement) {
-          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chL.playlistTracks[chL.playlistIndex].url)}`;
+          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chL.playlistTracks[chL.playlistIndex].url)}&title=${encodeURIComponent(chL.playlistTracks[chL.playlistIndex].title || '')}`;
           initAudioElement(chL, url);
         }
         chL.audioElement.play().catch(console.error);
@@ -2260,7 +2260,7 @@
         chR.mode = 'file';
         stopChannel(chR);
         if (!chR.audioElement) {
-          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chR.playlistTracks[chR.playlistIndex].url)}`;
+          const url = val.startsWith('file:') ? fileUrls[val] : `/api/stream?url=${encodeURIComponent(chR.playlistTracks[chR.playlistIndex].url)}&title=${encodeURIComponent(chR.playlistTracks[chR.playlistIndex].title || '')}`;
           initAudioElement(chR, url);
         }
         chR.audioElement.play().catch(console.error);
@@ -2566,7 +2566,7 @@
       return null;
     }
 
-    let streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}`;
+    let streamUrl = `/api/stream?url=${encodeURIComponent(track.url)}&title=${encodeURIComponent(track.title || '')}`;
     const isYoutube = track.url.includes('youtube.com') || 
                       track.url.includes('youtu.be') || 
                       track.url.startsWith('ytsearch');
