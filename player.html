@@ -3247,64 +3247,64 @@
         if (typeof updateMediaSessionMetadata === 'function') updateMediaSessionMetadata();
 
         // --- Multi-User Earbud Locking UI Logic ---
-        const controlsL = cardL.querySelector('.card-controls');
-        const controlsR = cardR.querySelector('.card-controls');
-        const claimBtnL = document.getElementById('claimBtnL');
-        const claimBtnR = document.getElementById('claimBtnR');
+        try {
+          const controlsL = cardL ? cardL.querySelector('.card-controls') : null;
+          const controlsR = cardR ? cardR.querySelector('.card-controls') : null;
+          const claimBtnL = document.getElementById('claimBtnL');
+          const claimBtnR = document.getElementById('claimBtnR');
 
-        if (roomClients.length <= 1) {
-          // Single User Mode
-          claimBtnL.style.display = 'none';
-          claimBtnR.style.display = 'none';
-          controlsL.classList.remove('disabled-channel');
-          controlsR.classList.remove('disabled-channel');
-          masterBtn.disabled = false;
-          swapBtn.disabled = false;
-          // Reset ownership
-          leftOwner = null;
-          rightOwner = null;
-        } else {
-          // Multi-User Mode
-          claimBtnL.style.display = 'inline-block';
-          claimBtnR.style.display = 'inline-block';
-          masterBtn.disabled = true;
-          swapBtn.disabled = true;
-
-          // --- LEFT EARBUD CHANNEL ---
-          if (leftOwner === clientId) {
-            // Owned by me
-            claimBtnL.textContent = 'Release Earbud';
-            claimBtnL.className = 'claim-btn claimed';
+          if (!controlsL || !controlsR || !claimBtnL || !claimBtnR) {
+            // Elements not ready yet, skip multi-user UI update
+          } else if (typeof roomClients === 'undefined' || roomClients.length <= 1) {
+            // Single User Mode
+            claimBtnL.style.display = 'none';
+            claimBtnR.style.display = 'none';
             controlsL.classList.remove('disabled-channel');
-          } else if (leftOwner) {
-            // Claimed by someone else
-            claimBtnL.textContent = 'Claimed by Remote';
-            claimBtnL.className = 'claim-btn claimed-by-other';
-            controlsL.classList.add('disabled-channel');
-          } else {
-            // Unclaimed
-            claimBtnL.textContent = 'Claim Earbud';
-            claimBtnL.className = 'claim-btn';
-            controlsL.classList.add('disabled-channel');
-          }
-
-          // --- RIGHT EARBUD CHANNEL ---
-          if (rightOwner === clientId) {
-            // Owned by me
-            claimBtnR.textContent = 'Release Earbud';
-            claimBtnR.className = 'claim-btn claimed';
             controlsR.classList.remove('disabled-channel');
-          } else if (rightOwner) {
-            // Claimed by someone else
-            claimBtnR.textContent = 'Claimed by Remote';
-            claimBtnR.className = 'claim-btn claimed-by-other';
-            controlsR.classList.add('disabled-channel');
+            if (masterBtn) masterBtn.disabled = false;
+            if (typeof swapBtn !== 'undefined' && swapBtn) swapBtn.disabled = false;
+            // Reset ownership
+            leftOwner = null;
+            rightOwner = null;
           } else {
-            // Unclaimed
-            claimBtnR.textContent = 'Claim Earbud';
-            claimBtnR.className = 'claim-btn';
-            controlsR.classList.add('disabled-channel');
+            // Multi-User Mode
+            claimBtnL.style.display = 'inline-block';
+            claimBtnR.style.display = 'inline-block';
+            if (masterBtn) masterBtn.disabled = true;
+            if (typeof swapBtn !== 'undefined' && swapBtn) swapBtn.disabled = true;
+
+            // --- LEFT EARBUD CHANNEL ---
+            if (leftOwner === clientId) {
+              claimBtnL.textContent = 'Release Earbud';
+              claimBtnL.className = 'claim-btn claimed';
+              controlsL.classList.remove('disabled-channel');
+            } else if (leftOwner) {
+              claimBtnL.textContent = 'Claimed by Remote';
+              claimBtnL.className = 'claim-btn claimed-by-other';
+              controlsL.classList.add('disabled-channel');
+            } else {
+              claimBtnL.textContent = 'Claim Earbud';
+              claimBtnL.className = 'claim-btn';
+              controlsL.classList.add('disabled-channel');
+            }
+
+            // --- RIGHT EARBUD CHANNEL ---
+            if (rightOwner === clientId) {
+              claimBtnR.textContent = 'Release Earbud';
+              claimBtnR.className = 'claim-btn claimed';
+              controlsR.classList.remove('disabled-channel');
+            } else if (rightOwner) {
+              claimBtnR.textContent = 'Claimed by Remote';
+              claimBtnR.className = 'claim-btn claimed-by-other';
+              controlsR.classList.add('disabled-channel');
+            } else {
+              claimBtnR.textContent = 'Claim Earbud';
+              claimBtnR.className = 'claim-btn';
+              controlsR.classList.add('disabled-channel');
+            }
           }
+        } catch (e) {
+          console.warn('Multi-user UI update skipped:', e);
         }
       }
 
@@ -4567,7 +4567,7 @@
         updateUI();
       }
 
-      setSyncMode(syncMode); // Set initial mode on load
+      try { setSyncMode(syncMode); } catch(e) { console.warn('Initial setSyncMode error:', e); } // Set initial mode on load
 
       syncModeGatewayBtn.addEventListener('click', () => setSyncMode('gateway'));
       syncModeRemoteBtn.addEventListener('click', () => setSyncMode('remote'));
