@@ -4,3 +4,4 @@ yt-dlp
 requests==2.32.2
 gunicorn==22.0.0
 python-dotenv
+gevent==24.2.1

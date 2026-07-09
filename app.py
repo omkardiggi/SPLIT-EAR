@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 import os
 import sys
 import json
@@ -1477,6 +1480,10 @@ def sse_stream():
         try:
             # Send an initial heartbeat
             yield format_sse({'type': 'connected', 'room': room_id}, event='hello')
+            
+            # Broadcast to all other listeners that a new device has joined!
+            announcer.announce(format_sse({'action': 'deviceJoined', 'room': room_id}, event='sync'))
+            
             while True:
                 try:
                     msg = q.get(timeout=25)
