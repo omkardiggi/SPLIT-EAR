@@ -3986,62 +3986,73 @@
       });
 
       // --- Access Request Modal Helpers ---
-      const accessModal = document.getElementById('accessModal');
-      const requestingDeviceId = document.getElementById('requestingDeviceId');
-      const approveAccessBtn = document.getElementById('approveAccessBtn');
-      const rejectAccessBtn = document.getElementById('rejectAccessBtn');
+      // Use lazy getters so elements are found even if HTML is after the script tag
+      function getAccessModal() { return document.getElementById('accessModal'); }
+      function getRequestingDeviceId() { return document.getElementById('requestingDeviceId'); }
 
       function showAccessRequestModal(remoteId) {
-        requestingDeviceId.textContent = remoteId;
-        accessModal.classList.add('visible');
+        const el = getRequestingDeviceId();
+        const modal = getAccessModal();
+        if (!el || !modal) return;
+        el.textContent = remoteId;
+        modal.classList.add('visible');
         
         // Wire up clicks
-        approveAccessBtn.onclick = () => {
+        const approveBtn = document.getElementById('approveAccessBtn');
+        const rejectBtn = document.getElementById('rejectAccessBtn');
+        if (approveBtn) approveBtn.onclick = () => {
           approvedRemotes.add(remoteId);
           emitSync('approveAccess', null, { targetClientId: remoteId });
-          accessModal.classList.remove('visible');
+          modal.classList.remove('visible');
         };
-        
-        rejectAccessBtn.onclick = () => {
+        if (rejectBtn) rejectBtn.onclick = () => {
           emitSync('rejectAccess', null, { targetClientId: remoteId });
-          accessModal.classList.remove('visible');
+          modal.classList.remove('visible');
         };
       }
 
       // --- Connection Pending Overlay Helpers ---
-      const pendingOverlay = document.getElementById('pendingOverlay');
-      const pendingOverlayBody = document.getElementById('pendingOverlayBody');
-      const pendingOverlayFoot = document.getElementById('pendingOverlayFoot');
-      const retryConnectBtn = document.getElementById('retryConnectBtn');
+      function getPendingOverlay() { return document.getElementById('pendingOverlay'); }
+      function getPendingOverlayBody() { return document.getElementById('pendingOverlayBody'); }
+      function getPendingOverlayFoot() { return document.getElementById('pendingOverlayFoot'); }
       let pendingTimeout = null;
 
       function showPendingOverlay() {
-        pendingOverlayBody.innerHTML = '<span class="hud-dot blink"></span> Requesting remote control access from the Audio Gateway host...';
-        pendingOverlayFoot.style.display = 'none';
-        pendingOverlay.classList.add('visible');
+        const body = getPendingOverlayBody();
+        const foot = getPendingOverlayFoot();
+        const overlay = getPendingOverlay();
+        if (!body || !foot || !overlay) return;
+        body.innerHTML = '<span class="hud-dot blink"></span> Requesting remote control access from the Audio Gateway host...';
+        foot.style.display = 'none';
+        overlay.classList.add('visible');
 
         clearTimeout(pendingTimeout);
         pendingTimeout = setTimeout(() => {
-          if (pendingOverlay.classList.contains('visible')) {
+          if (overlay.classList.contains('visible')) {
             if (roomClients.length <= 1) {
-              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> No Audio Gateway host detected in this room.<br><small style="color: var(--muted)">Please scan the QR code from the gateway device or open this link on the primary playback device first.</small>';
+              body.innerHTML = '<span class="hud-dot"></span> No Audio Gateway host detected in this room.<br><small style="color: var(--muted)">Please scan the QR code from the gateway device or open this link on the primary playback device first.</small>';
             } else {
-              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> Request timed out. Ensure the Audio Gateway host is open and connected to this room.';
+              body.innerHTML = '<span class="hud-dot"></span> Request timed out. Ensure the Audio Gateway host is open and connected to this room.';
             }
-            pendingOverlayFoot.style.display = 'block';
+            foot.style.display = 'block';
           }
         }, 8000);
       }
 
       function hidePendingOverlay() {
-        pendingOverlay.classList.remove('visible');
+        const overlay = getPendingOverlay();
+        if (overlay) overlay.classList.remove('visible');
         clearTimeout(pendingTimeout);
       }
 
-      retryConnectBtn.addEventListener('click', () => {
-        showPendingOverlay();
-        emitSync('requestAccess', null, { clientId: clientId });
-      });
+      // Defer retryConnectBtn wiring (element may not exist yet)
+      setTimeout(() => {
+        const retryConnectBtn = document.getElementById('retryConnectBtn');
+        if (retryConnectBtn) retryConnectBtn.addEventListener('click', () => {
+          showPendingOverlay();
+          emitSync('requestAccess', null, { clientId: clientId });
+        });
+      }, 0);
 
       /* ---------- per-channel play/pause buttons wiring ---------- */
 
@@ -4953,8 +4964,10 @@
 
           case 'rejectAccess':
             if (data.targetClientId === clientId) {
-              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> Access Denied.<br><small style="color: var(--pink)">The Audio Gateway host rejected your connection request.</small>';
-              pendingOverlayFoot.style.display = 'block';
+              const _body = getPendingOverlayBody();
+              const _foot = getPendingOverlayFoot();
+              if (_body) _body.innerHTML = '<span class="hud-dot"></span> Access Denied.<br><small style="color: var(--pink)">The Audio Gateway host rejected your connection request.</small>';
+              if (_foot) _foot.style.display = 'block';
               toast('Access Rejected by Gateway Host.', 'warn');
             }
             break;
