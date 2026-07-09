@@ -2660,6 +2660,44 @@
     </div>
     <button class="close-btn" id="closeModal">GOT IT</button>
   </dialog>
+  <!-- Cyberpunk Modal / Access Request Overlay -->
+  <div class="cyber-overlay" id="accessModal">
+    <div class="cyber-modal">
+      <div class="hud-bracket top-left"></div>
+      <div class="hud-bracket top-right"></div>
+      <div class="hud-bracket bottom-left"></div>
+      <div class="hud-bracket bottom-right"></div>
+      <div class="modal-head">
+        <span class="hud-dot"></span> SECURE CONNECT REQUEST
+      </div>
+      <div class="modal-body" id="accessModalBody">
+        Remote device <b id="requestingDeviceId">DEVICE-1234</b> is requesting remote control access to this audio gateway.
+      </div>
+      <div class="modal-foot">
+        <button class="modal-btn approve" id="approveAccessBtn">Approve</button>
+        <button class="modal-btn reject" id="rejectAccessBtn">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connection Pending Overlay -->
+  <div class="cyber-overlay" id="pendingOverlay">
+    <div class="cyber-modal">
+      <div class="hud-bracket top-left"></div>
+      <div class="hud-bracket top-right"></div>
+      <div class="hud-bracket bottom-left"></div>
+      <div class="hud-bracket bottom-right"></div>
+      <div class="modal-head">
+        <span class="hud-dot blink"></span> CONNECTION PENDING
+      </div>
+      <div class="modal-body" id="pendingOverlayBody">
+        Requesting remote control access from the Audio Gateway host...
+      </div>
+      <div class="modal-foot" id="pendingOverlayFoot" style="display: none;">
+        <button class="modal-btn" id="retryConnectBtn">Retry Connect</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     (() => {
@@ -5417,45 +5455,6 @@
 
     })();
   </script>
-
-  <!-- Cyberpunk Modal / Access Request Overlay -->
-  <div class="cyber-overlay" id="accessModal">
-    <div class="cyber-modal">
-      <div class="hud-bracket top-left"></div>
-      <div class="hud-bracket top-right"></div>
-      <div class="hud-bracket bottom-left"></div>
-      <div class="hud-bracket bottom-right"></div>
-      <div class="modal-head">
-        <span class="hud-dot"></span> SECURE CONNECT REQUEST
-      </div>
-      <div class="modal-body" id="accessModalBody">
-        Remote device <b id="requestingDeviceId">DEVICE-1234</b> is requesting remote control access to this audio gateway.
-      </div>
-      <div class="modal-foot">
-        <button class="modal-btn approve" id="approveAccessBtn">Approve</button>
-        <button class="modal-btn reject" id="rejectAccessBtn">Reject</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Connection Pending Overlay -->
-  <div class="cyber-overlay" id="pendingOverlay">
-    <div class="cyber-modal">
-      <div class="hud-bracket top-left"></div>
-      <div class="hud-bracket top-right"></div>
-      <div class="hud-bracket bottom-left"></div>
-      <div class="hud-bracket bottom-right"></div>
-      <div class="modal-head">
-        <span class="hud-dot blink"></span> CONNECTION PENDING
-      </div>
-      <div class="modal-body" id="pendingOverlayBody">
-        Requesting remote control access from the Audio Gateway host...
-      </div>
-      <div class="modal-foot" id="pendingOverlayFoot" style="display: none;">
-        <button class="modal-btn" id="retryConnectBtn">Retry Connect</button>
-      </div>
-    </div>
-  </div>
 </body>
 
 </html>
