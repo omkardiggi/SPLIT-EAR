@@ -135,6 +135,9 @@ def get_default_room_state():
         },
         'swapped': False,
         'ts': 0,  # timestamp of last update
+        'leftOwner': None,
+        'rightOwner': None,
+        'clients': [],
     }
 
 def get_room_state_and_announcer(room_id):
@@ -1462,6 +1465,15 @@ def post_sync():
         
         elif action == 'swap':
             room_state['swapped'] = data.get('value', False)
+
+        elif action == 'claimEarbud' and channel:
+            owner_key = f"{channel}Owner"
+            room_state[owner_key] = data.get('owner')
+
+        elif action == 'releaseEarbud' and channel:
+            owner_key = f"{channel}Owner"
+            if room_state[owner_key] == data.get('owner'):
+                room_state[owner_key] = None
     
     # Broadcast only to the announcer for this room
     event_data = {**data, 'ts': room_state['ts']}
@@ -1473,8 +1485,13 @@ def post_sync():
 def sse_stream():
     """SSE endpoint. Clients connect here with EventSource to receive real-time sync events for their room."""
     room_id = request.args.get('room', 'default')
-    _, announcer = get_room_state_and_announcer(room_id)
+    client_id = request.args.get('clientId', 'unknown')
+    room_state, announcer = get_room_state_and_announcer(room_id)
     
+    with rooms_lock:
+        if client_id not in room_state['clients']:
+            room_state['clients'].append(client_id)
+            
     def stream():
         q = announcer.listen()
         try:
@@ -1482,7 +1499,14 @@ def sse_stream():
             yield format_sse({'type': 'connected', 'room': room_id}, event='hello')
             
             # Broadcast to all other listeners that a new device has joined!
-            announcer.announce(format_sse({'action': 'deviceJoined', 'room': room_id}, event='sync'))
+            announcer.announce(format_sse({
+                'action': 'deviceJoined',
+                'room': room_id,
+                'clientId': client_id,
+                'clients': room_state['clients'],
+                'leftOwner': room_state.get('leftOwner'),
+                'rightOwner': room_state.get('rightOwner')
+            }, event='sync'))
             
             while True:
                 try:
@@ -1493,7 +1517,23 @@ def sse_stream():
                     yield ': keepalive\n\n'
         except GeneratorExit:
             announcer.remove(q)
-    
+            with rooms_lock:
+                if client_id in room_state['clients']:
+                    room_state['clients'].remove(client_id)
+                if room_state.get('leftOwner') == client_id:
+                    room_state['leftOwner'] = None
+                if room_state.get('rightOwner') == client_id:
+                    room_state['rightOwner'] = None
+            # Broadcast to all other listeners that a device has left!
+            announcer.announce(format_sse({
+                'action': 'deviceLeft',
+                'room': room_id,
+                'clientId': client_id,
+                'clients': room_state['clients'],
+                'leftOwner': room_state.get('leftOwner'),
+                'rightOwner': room_state.get('rightOwner')
+            }, event='sync'))
+            
     return Response(
         stream_with_context(stream()),
         mimetype='text/event-stream',

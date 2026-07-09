@@ -2032,6 +2032,139 @@
       color: var(--text);
       border-color: var(--muted);
     }
+
+    /* ---------- Claim Button and Multi-User Coordination ---------- */
+    .claim-btn {
+      background: transparent;
+      border: 1px solid var(--blue);
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+      margin-left: auto;
+      margin-right: 8px;
+    }
+    .claim-btn:hover {
+      background: var(--blue-dim);
+      box-shadow: 0 0 8px var(--blue-dim);
+    }
+    .claim-btn.claimed {
+      background: var(--blue);
+      color: #05060b;
+      border-color: var(--blue);
+      text-shadow: none;
+      box-shadow: 0 0 10px var(--blue-dim);
+    }
+    .claim-btn.claimed-by-other {
+      border-color: var(--muted);
+      color: var(--muted);
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    
+    .card-controls {
+      transition: all 0.25s ease;
+    }
+    .card-controls.disabled-channel {
+      pointer-events: none;
+      opacity: 0.25;
+      filter: grayscale(0.85);
+    }
+
+    .cyber-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 5, 9, 0.9);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 1000;
+      display: none;
+      place-items: center;
+    }
+    .cyber-overlay.visible {
+      display: grid;
+    }
+    .cyber-modal {
+      background: linear-gradient(180deg, var(--panel-2), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 30px;
+      width: min(450px, 90%);
+      position: relative;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 0 15px rgba(0,229,255,0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .modal-head {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: var(--blue);
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+    .modal-body {
+      font-family: var(--body);
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+    .modal-foot {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .modal-btn {
+      flex: 1;
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.15s;
+    }
+    .modal-btn:hover {
+      border-color: var(--text);
+      background: rgba(255,255,255,0.02);
+    }
+    .modal-btn.approve {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+    .modal-btn.approve:hover {
+      background: var(--blue-dim);
+      box-shadow: 0 0 12px var(--blue-dim);
+    }
+    .modal-btn.reject {
+      border-color: var(--pink);
+      color: var(--pink);
+    }
+    .modal-btn.reject:hover {
+      background: var(--pink-dim);
+      box-shadow: 0 0 12px var(--pink-dim);
+    }
+    .blink {
+      animation: simple-blink 1.2s infinite alternate;
+    }
+    @keyframes simple-blink {
+      from { opacity: 0.3; }
+      to { opacity: 1; }
+    }
   </style>
 </head>
 
@@ -2058,10 +2191,12 @@
       <div class="card-head">
         <div class="ear-badge" aria-hidden="true">L</div>
         <div class="card-title">Left Channel<strong>Track A</strong></div>
+        <button class="claim-btn" id="claimBtnL" style="display: none;">Claim Earbud</button>
         <span class="hud-status" id="statusL">STANDBY</span>
       </div>
 
-      <div class="field">
+      <div class="card-controls">
+        <div class="field">
         <label for="selL"><span class="hud-dot"></span> Source Select</label>
         <select id="selL">
           <option value="none">None (Silence)</option>
@@ -2162,6 +2297,7 @@
       </div>
 
       <div class="status-line"><span>PAN <b id="panL">−1.0 · HARD LEFT</b></span><span id="stateL">STANDBY</span></div>
+      </div>
     </section>
 
     <!-- MASTER COLUMN (CENTER STAGE: EARBUDS + MASTER CONTROLS) -->
@@ -2347,10 +2483,12 @@
       <div class="card-head">
         <div class="ear-badge" aria-hidden="true">R</div>
         <div class="card-title">Right Channel<strong>Track B</strong></div>
+        <button class="claim-btn" id="claimBtnR" style="display: none;">Claim Earbud</button>
         <span class="hud-status" id="statusR">STANDBY</span>
       </div>
 
-      <div class="field">
+      <div class="card-controls">
+        <div class="field">
         <label for="selR"><span class="hud-dot"></span> Source Select</label>
         <select id="selR">
           <option value="none">None (Silence)</option>
@@ -2451,6 +2589,7 @@
       </div>
 
       <div class="status-line"><span>PAN <b id="panR">+1.0 · HARD RIGHT</b></span><span id="stateR">STANDBY</span></div>
+      </div>
     </section>
   </main>
 
@@ -3106,6 +3245,67 @@
 
         // Update lockscreen / Bluetooth media key info
         if (typeof updateMediaSessionMetadata === 'function') updateMediaSessionMetadata();
+
+        // --- Multi-User Earbud Locking UI Logic ---
+        const controlsL = cardL.querySelector('.card-controls');
+        const controlsR = cardR.querySelector('.card-controls');
+        const claimBtnL = document.getElementById('claimBtnL');
+        const claimBtnR = document.getElementById('claimBtnR');
+
+        if (roomClients.length <= 1) {
+          // Single User Mode
+          claimBtnL.style.display = 'none';
+          claimBtnR.style.display = 'none';
+          controlsL.classList.remove('disabled-channel');
+          controlsR.classList.remove('disabled-channel');
+          masterBtn.disabled = false;
+          swapBtn.disabled = false;
+          // Reset ownership
+          leftOwner = null;
+          rightOwner = null;
+        } else {
+          // Multi-User Mode
+          claimBtnL.style.display = 'inline-block';
+          claimBtnR.style.display = 'inline-block';
+          masterBtn.disabled = true;
+          swapBtn.disabled = true;
+
+          // --- LEFT EARBUD CHANNEL ---
+          if (leftOwner === clientId) {
+            // Owned by me
+            claimBtnL.textContent = 'Release Earbud';
+            claimBtnL.className = 'claim-btn claimed';
+            controlsL.classList.remove('disabled-channel');
+          } else if (leftOwner) {
+            // Claimed by someone else
+            claimBtnL.textContent = 'Claimed by Remote';
+            claimBtnL.className = 'claim-btn claimed-by-other';
+            controlsL.classList.add('disabled-channel');
+          } else {
+            // Unclaimed
+            claimBtnL.textContent = 'Claim Earbud';
+            claimBtnL.className = 'claim-btn';
+            controlsL.classList.add('disabled-channel');
+          }
+
+          // --- RIGHT EARBUD CHANNEL ---
+          if (rightOwner === clientId) {
+            // Owned by me
+            claimBtnR.textContent = 'Release Earbud';
+            claimBtnR.className = 'claim-btn claimed';
+            controlsR.classList.remove('disabled-channel');
+          } else if (rightOwner) {
+            // Claimed by someone else
+            claimBtnR.textContent = 'Claimed by Remote';
+            claimBtnR.className = 'claim-btn claimed-by-other';
+            controlsR.classList.add('disabled-channel');
+          } else {
+            // Unclaimed
+            claimBtnR.textContent = 'Claim Earbud';
+            claimBtnR.className = 'claim-btn';
+            controlsR.classList.add('disabled-channel');
+          }
+        }
       }
 
       /* ---------- track switching (hot-swap while playing) ---------- */
@@ -3717,6 +3917,94 @@
       document.getElementById('capBtnL').addEventListener('click', () => captureTab(chL, cardL, 'L').catch(console.error));
       document.getElementById('capBtnR').addEventListener('click', () => captureTab(chR, cardR, 'R').catch(console.error));
 
+      /* ---------- claim earbuds buttons wiring ---------- */
+      const claimBtnL = document.getElementById('claimBtnL');
+      const claimBtnR = document.getElementById('claimBtnR');
+
+      claimBtnL.addEventListener('click', () => {
+        if (leftOwner === clientId) {
+          leftOwner = null;
+          ownedEarbud = null;
+          emitSync('releaseEarbud', 'left', { owner: clientId });
+        } else if (!leftOwner && !ownedEarbud) {
+          leftOwner = clientId;
+          ownedEarbud = 'left';
+          emitSync('claimEarbud', 'left', { owner: clientId });
+        }
+        updateUI();
+      });
+
+      claimBtnR.addEventListener('click', () => {
+        if (rightOwner === clientId) {
+          rightOwner = null;
+          ownedEarbud = null;
+          emitSync('releaseEarbud', 'right', { owner: clientId });
+        } else if (!rightOwner && !ownedEarbud) {
+          rightOwner = clientId;
+          ownedEarbud = 'right';
+          emitSync('claimEarbud', 'right', { owner: clientId });
+        }
+        updateUI();
+      });
+
+      // --- Access Request Modal Helpers ---
+      const accessModal = document.getElementById('accessModal');
+      const requestingDeviceId = document.getElementById('requestingDeviceId');
+      const approveAccessBtn = document.getElementById('approveAccessBtn');
+      const rejectAccessBtn = document.getElementById('rejectAccessBtn');
+
+      function showAccessRequestModal(remoteId) {
+        requestingDeviceId.textContent = remoteId;
+        accessModal.classList.add('visible');
+        
+        // Wire up clicks
+        approveAccessBtn.onclick = () => {
+          approvedRemotes.add(remoteId);
+          emitSync('approveAccess', null, { targetClientId: remoteId });
+          accessModal.classList.remove('visible');
+        };
+        
+        rejectAccessBtn.onclick = () => {
+          emitSync('rejectAccess', null, { targetClientId: remoteId });
+          accessModal.classList.remove('visible');
+        };
+      }
+
+      // --- Connection Pending Overlay Helpers ---
+      const pendingOverlay = document.getElementById('pendingOverlay');
+      const pendingOverlayBody = document.getElementById('pendingOverlayBody');
+      const pendingOverlayFoot = document.getElementById('pendingOverlayFoot');
+      const retryConnectBtn = document.getElementById('retryConnectBtn');
+      let pendingTimeout = null;
+
+      function showPendingOverlay() {
+        pendingOverlayBody.innerHTML = '<span class="hud-dot blink"></span> Requesting remote control access from the Audio Gateway host...';
+        pendingOverlayFoot.style.display = 'none';
+        pendingOverlay.classList.add('visible');
+
+        clearTimeout(pendingTimeout);
+        pendingTimeout = setTimeout(() => {
+          if (pendingOverlay.classList.contains('visible')) {
+            if (roomClients.length <= 1) {
+              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> No Audio Gateway host detected in this room.<br><small style="color: var(--muted)">Please scan the QR code from the gateway device or open this link on the primary playback device first.</small>';
+            } else {
+              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> Request timed out. Ensure the Audio Gateway host is open and connected to this room.';
+            }
+            pendingOverlayFoot.style.display = 'block';
+          }
+        }, 8000);
+      }
+
+      function hidePendingOverlay() {
+        pendingOverlay.classList.remove('visible');
+        clearTimeout(pendingTimeout);
+      }
+
+      retryConnectBtn.addEventListener('click', () => {
+        showPendingOverlay();
+        emitSync('requestAccess', null, { clientId: clientId });
+      });
+
       /* ---------- per-channel play/pause buttons wiring ---------- */
 
       document.getElementById('playBtnL').addEventListener('click', () => {
@@ -4111,7 +4399,18 @@
         roomIdDisplay.textContent = roomId;
       }
 
-      let syncMode = 'gateway';  // 'gateway' = plays audio | 'remote' = control only
+      // Unique Client ID for multi-user coordination
+      const clientId = sessionStorage.getItem('clientId') || 'client_' + Math.random().toString(36).substring(2, 7);
+      sessionStorage.setItem('clientId', clientId);
+
+      let leftOwner = null;
+      let rightOwner = null;
+      let ownedEarbud = null; // 'left', 'right', or null
+      let roomClients = [];
+      const approvedRemotes = new Set();
+
+      const urlParams = new URLSearchParams(window.location.search);
+      let syncMode = urlParams.get('mode') || 'gateway';  // 'gateway' = plays audio | 'remote' = control only
       let syncConnected = false;
       let syncEventSource = null;
       let ignoreSyncUntil = 0;  // Timestamp: ignore inbound events that are echoes of our own action
@@ -4122,8 +4421,9 @@
       const syncModeGatewayBtn = document.getElementById('syncModeGateway');
       const syncModeRemoteBtn = document.getElementById('syncModeRemote');
 
-      // Show the shareable URL (use the current window URL with room parameter)
-      syncUrlDisplay.textContent = window.location.href;
+      // Show the shareable URL (use the current window URL with room parameter and mode=remote)
+      const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}&mode=remote`;
+      syncUrlDisplay.textContent = shareUrl;
 
       // --- LocalStorage Save/Restore Helpers ---
       function saveToLocal(ch) {
@@ -4244,18 +4544,30 @@
         syncModeGatewayBtn.classList.toggle('active', mode === 'gateway');
         syncModeRemoteBtn.classList.toggle('active', mode === 'remote');
 
+        const params = new URLSearchParams(window.location.search);
+        params.set('mode', mode);
+        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+
         if (mode === 'remote') {
           // Mute local audio output (remote controllers don't play sound)
           if (chL.audioElement) chL.audioElement.muted = true;
           if (chR.audioElement) chR.audioElement.muted = true;
           syncStatusText.innerHTML = 'Mode: <b>Remote Controller</b> — audio plays on the Gateway device.';
+          
+          // Request access when switching to remote
+          showPendingOverlay();
+          emitSync('requestAccess', null, { clientId: clientId });
         } else {
-          if (chL.audioElement) chL.audioElement.muted = false;
-          if (chR.audioElement) chR.audioElement.muted = false;
+          if (chL.audioElement) chL.audioElement.muted = chL.muted;
+          if (chR.audioElement) chR.audioElement.muted = chR.muted;
           syncStatusText.innerHTML = 'Mode: <b>Audio Gateway</b> — sound plays from THIS device.';
+          hidePendingOverlay();
         }
         toast(mode === 'gateway' ? 'Audio Gateway mode: sound plays here.' : 'Remote Controller mode: controlling the other device.', 'ok');
+        updateUI();
       }
+
+      setSyncMode(syncMode); // Set initial mode on load
 
       syncModeGatewayBtn.addEventListener('click', () => setSyncMode('gateway'));
       syncModeRemoteBtn.addEventListener('click', () => setSyncMode('remote'));
@@ -4263,7 +4575,7 @@
       // --- Broadcast a sync action to the server ---
       function emitSync(action, channel, extra) {
         ignoreSyncUntil = Date.now() + 400;  // Ignore echoes for 400ms
-        const body = { action, room: roomId, ...extra };
+        const body = { action, room: roomId, senderClientId: clientId, ...extra };
         if (channel) body.channel = channel;
         fetch('/api/sync', {
           method: 'POST',
@@ -4419,6 +4731,16 @@
         const action = data.action;
         const side = data.channel;
         const ch = side ? chFromSide(side) : null;
+        const senderId = data.senderClientId;
+
+        // Enforce earbud ownership permissions
+        if (roomClients.length > 1 && ch) {
+          const owner = side === 'left' ? leftOwner : rightOwner;
+          if (owner && senderId && senderId !== owner) {
+            console.warn(`Sync action '${action}' on ${side} channel ignored because sender '${senderId}' does not own it (owner is '${owner}').`);
+            return;
+          }
+        }
 
         switch (action) {
           case 'play':
@@ -4520,17 +4842,79 @@
             break;
 
           case 'deviceJoined':
+            if (data.clients) {
+              roomClients = data.clients;
+            }
+            if (data.leftOwner !== undefined) leftOwner = data.leftOwner;
+            if (data.rightOwner !== undefined) rightOwner = data.rightOwner;
+            updateUI();
+
             // A new device has joined. If we are actively playing, broadcast our state to sync them up!
-            ['left', 'right'].forEach(side => {
-              const ch = chFromSide(side);
-              if (ch.playing && ch.audioElement) {
-                emitSync('syncPlayback', side, {
-                  index: ch.playlistIndex,
-                  currentTime: ch.audioElement.currentTime,
-                  playing: ch.playing
-                });
-              }
-            });
+            if (syncMode === 'gateway') {
+              ['left', 'right'].forEach(side => {
+                const ch = chFromSide(side);
+                if (ch.playing && ch.audioElement) {
+                  emitSync('syncPlayback', side, {
+                    index: ch.playlistIndex,
+                    currentTime: ch.audioElement.currentTime,
+                    playing: ch.playing
+                  });
+                }
+              });
+            }
+            break;
+
+          case 'deviceLeft':
+            if (data.clients) {
+              roomClients = data.clients;
+            }
+            if (data.leftOwner !== undefined) leftOwner = data.leftOwner;
+            if (data.rightOwner !== undefined) rightOwner = data.rightOwner;
+            
+            // If the device that left was our owner claim, release it
+            if (leftOwner === null && ownedEarbud === 'left') ownedEarbud = null;
+            if (rightOwner === null && ownedEarbud === 'right') ownedEarbud = null;
+            
+            updateUI();
+            break;
+
+          case 'claimEarbud':
+            if (side === 'left') leftOwner = data.owner;
+            if (side === 'right') rightOwner = data.owner;
+            updateUI();
+            break;
+
+          case 'releaseEarbud':
+            if (side === 'left' && leftOwner === data.owner) {
+              leftOwner = null;
+              if (ownedEarbud === 'left') ownedEarbud = null;
+            }
+            if (side === 'right' && rightOwner === data.owner) {
+              rightOwner = null;
+              if (ownedEarbud === 'right') ownedEarbud = null;
+            }
+            updateUI();
+            break;
+
+          case 'requestAccess':
+            if (syncMode === 'gateway' && data.clientId !== clientId && !approvedRemotes.has(data.clientId)) {
+              showAccessRequestModal(data.clientId);
+            }
+            break;
+
+          case 'approveAccess':
+            if (data.targetClientId === clientId) {
+              hidePendingOverlay();
+              toast('Access Approved by Gateway Host!', 'ok');
+            }
+            break;
+
+          case 'rejectAccess':
+            if (data.targetClientId === clientId) {
+              pendingOverlayBody.innerHTML = '<span class="hud-dot"></span> Access Denied.<br><small style="color: var(--pink)">The Audio Gateway host rejected your connection request.</small>';
+              pendingOverlayFoot.style.display = 'block';
+              toast('Access Rejected by Gateway Host.', 'warn');
+            }
             break;
 
           case 'syncPlayback':
@@ -4573,7 +4957,7 @@
         if (syncEventSource) {
           syncEventSource.close();
         }
-        syncEventSource = new EventSource(`/api/events?room=${encodeURIComponent(roomId)}`);
+        syncEventSource = new EventSource(`/api/events?room=${encodeURIComponent(roomId)}&clientId=${encodeURIComponent(clientId)}`);
 
         syncEventSource.addEventListener('hello', () => {
           syncConnected = true;
@@ -4581,6 +4965,11 @@
           syncStatusText.innerHTML = syncMode === 'gateway'
             ? 'Mode: <b>Audio Gateway</b> — sound plays from THIS device.'
             : 'Mode: <b>Remote Controller</b> — audio plays on the Gateway device.';
+
+          if (syncMode === 'remote') {
+            showPendingOverlay();
+            emitSync('requestAccess', null, { clientId: clientId });
+          }
         });
 
         syncEventSource.addEventListener('sync', (e) => {
@@ -4605,6 +4994,10 @@
           const res = await fetch(`/api/state?room=${encodeURIComponent(roomId)}`);
           if (!res.ok) return;
           const state = await res.json();
+
+          leftOwner = state.leftOwner || null;
+          rightOwner = state.rightOwner || null;
+          roomClients = state.clients || [];
 
           // Apply state to both channels
           await Promise.all(['left', 'right'].map(async (side) => {
@@ -4995,8 +5388,7 @@
       function generateQRCode() {
         const container = document.getElementById('qrContainer');
         if (!container) return;
-        // Use the LAN URL for sharing
-        const shareUrl = window.location.href;
+        const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}&mode=remote`;
         const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&bgcolor=0a0c16&color=00e5ff&format=png&data=${encodeURIComponent(shareUrl)}`;
         const img = document.createElement('img');
         img.src = qrApiUrl;
@@ -5021,6 +5413,45 @@
 
     })();
   </script>
+
+  <!-- Cyberpunk Modal / Access Request Overlay -->
+  <div class="cyber-overlay" id="accessModal">
+    <div class="cyber-modal">
+      <div class="hud-bracket top-left"></div>
+      <div class="hud-bracket top-right"></div>
+      <div class="hud-bracket bottom-left"></div>
+      <div class="hud-bracket bottom-right"></div>
+      <div class="modal-head">
+        <span class="hud-dot"></span> SECURE CONNECT REQUEST
+      </div>
+      <div class="modal-body" id="accessModalBody">
+        Remote device <b id="requestingDeviceId">DEVICE-1234</b> is requesting remote control access to this audio gateway.
+      </div>
+      <div class="modal-foot">
+        <button class="modal-btn approve" id="approveAccessBtn">Approve</button>
+        <button class="modal-btn reject" id="rejectAccessBtn">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connection Pending Overlay -->
+  <div class="cyber-overlay" id="pendingOverlay">
+    <div class="cyber-modal">
+      <div class="hud-bracket top-left"></div>
+      <div class="hud-bracket top-right"></div>
+      <div class="hud-bracket bottom-left"></div>
+      <div class="hud-bracket bottom-right"></div>
+      <div class="modal-head">
+        <span class="hud-dot blink"></span> CONNECTION PENDING
+      </div>
+      <div class="modal-body" id="pendingOverlayBody">
+        Requesting remote control access from the Audio Gateway host...
+      </div>
+      <div class="modal-foot" id="pendingOverlayFoot" style="display: none;">
+        <button class="modal-btn" id="retryConnectBtn">Retry Connect</button>
+      </div>
+    </div>
+  </div>
 </body>
 
 </html>
