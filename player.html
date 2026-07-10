@@ -4081,6 +4081,14 @@
       document.getElementById('capBtnL').addEventListener('click', () => captureTab(chL, cardL, 'L').catch(console.error));
       document.getElementById('capBtnR').addEventListener('click', () => captureTab(chR, cardR, 'R').catch(console.error));
 
+      // Hide capture tab buttons if getDisplayMedia is not supported (like on iOS/Android mobile browsers)
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        const btnL = document.getElementById('capBtnL');
+        const btnR = document.getElementById('capBtnR');
+        if (btnL) btnL.style.display = 'none';
+        if (btnR) btnR.style.display = 'none';
+      }
+
       /* ---------- claim earbuds buttons wiring ---------- */
       const claimBtnL = document.getElementById('claimBtnL');
       const claimBtnR = document.getElementById('claimBtnR');
