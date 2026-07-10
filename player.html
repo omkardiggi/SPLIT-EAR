@@ -2256,6 +2256,7 @@
           <option value="none" selected>None (Silence)</option>
           <option value="lofi">Lo-fi Beats</option>
           <option value="nature">Nature · Rain &amp; Birds</option>
+          <option value="live_android">◉ Live Android Capture</option>
           <option value="speech">Podcast / Speech (synth)</option>
           <option value="noise">White Noise</option>
         </select>
@@ -2514,6 +2515,13 @@
           </div>
           <div class="sync-url-display" id="syncUrlDisplay">loading...</div>
           <div class="qr-container" id="qrContainer"></div>
+          
+          <!-- Android app download section -->
+          <div style="border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; text-align: center;">
+            <div style="font-family: var(--mono); font-size: 8px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 6px;">ANDROID CAPTURE UTILITY</div>
+            <p style="font-size: 10px; color: var(--muted); margin-bottom: 8px; line-height: 1.35;">Stream games, YouTube, or Instagram audio from Android directly to your Split-Ear session.</p>
+            <a href="/download/apk" class="upload-btn" style="display: block; width: 100%; text-decoration: none; padding: 8px; box-sizing: border-box; font-family: var(--mono); font-size: 9px; font-weight: 600;" download>📥 DOWNLOAD ANDROID APK</a>
+          </div>
         </div>
 
         <div class="output-box">
@@ -2556,6 +2564,7 @@
           <option value="none" selected>None (Silence)</option>
           <option value="lofi">Lo-fi Beats</option>
           <option value="nature">Nature · Rain &amp; Birds</option>
+          <option value="live_android">◉ Live Android Capture</option>
           <option value="speech">Podcast / Speech (synth)</option>
           <option value="noise">White Noise</option>
         </select>
@@ -3477,6 +3486,15 @@
       function onTrackChange(ch) {
         const val = ch.selectEl.value;
 
+        if (val === 'live_android') {
+          ch.mode = 'live';
+          stopChannel(ch);
+          cleanupAudioElement(ch);
+          nextStartTime[chSide(ch)] = ctx ? ctx.currentTime : 0;
+          updateUI();
+          return;
+        }
+
         if (ch.live && val === ch.live.optionId) {
           ch.mode = 'live';
           stopChannel(ch);
@@ -4087,6 +4105,40 @@
         const btnR = document.getElementById('capBtnR');
         if (btnL) btnL.style.display = 'none';
         if (btnR) btnR.style.display = 'none';
+      }
+
+      /* ---------- Live Android Audio Stream Rendering ---------- */
+      let nextStartTime = {};
+
+      function playLivePCMChunk(ch, float32Data) {
+        if (!ctx) return;
+        const side = chSide(ch);
+        
+        // Split interleaved stereo samples
+        const numSamples = float32Data.length / 2;
+        const leftChannel = new Float32Array(numSamples);
+        const rightChannel = new Float32Array(numSamples);
+        
+        for (let i = 0; i < numSamples; i++) {
+          leftChannel[i] = float32Data[i * 2];
+          rightChannel[i] = float32Data[i * 2 + 1];
+        }
+        
+        const audioBuffer = ctx.createBuffer(2, numSamples, 44100);
+        audioBuffer.copyToChannel(leftChannel, 0);
+        audioBuffer.copyToChannel(rightChannel, 1);
+        
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ch.gainNode);
+        
+        let startTime = nextStartTime[side] || ctx.currentTime;
+        if (startTime < ctx.currentTime) {
+          startTime = ctx.currentTime + 0.01;
+        }
+        
+        source.start(startTime);
+        nextStartTime[side] = startTime + audioBuffer.duration;
       }
 
       /* ---------- claim earbuds buttons wiring ---------- */
@@ -5024,6 +5076,25 @@
               playTrackAtIndex(ch, data.index || 0);
             }
             break;
+
+          case 'liveAudio': {
+            if (ch && ch.mode === 'live' && ctx) {
+              const binaryString = atob(data.data);
+              const len = binaryString.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const pcm16 = new Int16Array(bytes.buffer);
+              const samples = pcm16.length;
+              const f32 = new Float32Array(samples);
+              for (let i = 0; i < samples; i++) {
+                f32[i] = pcm16[i] / 32768.0;
+              }
+              playLivePCMChunk(ch, f32);
+            }
+            break;
+          }
 
           case 'deviceJoined':
             if (data.clients) {

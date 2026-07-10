@@ -1564,6 +1564,62 @@ def sse_stream():
         }
     )
 
+@app.route('/api/stream-upload', methods=['POST'])
+def stream_upload():
+    room_id = request.args.get('room', 'default')
+    channel = request.args.get('channel', 'left')
+    
+    pcm_data = request.data
+    if not pcm_data:
+        return jsonify({'error': 'No audio data'}), 400
+        
+    import base64
+    b64_data = base64.b64encode(pcm_data).decode('utf-8')
+    
+    _, announcer = get_room_state_and_announcer(room_id)
+    announcer.announce(format_sse({
+        'action': 'liveAudio',
+        'room': room_id,
+        'channel': channel,
+        'data': b64_data
+    }, event='sync'))
+    
+    return jsonify({'ok': True})
+
+@app.route('/download/apk')
+def download_apk():
+    apk_path = os.path.join(app.root_path, 'static', 'splitear.apk')
+    if os.path.exists(apk_path):
+        return send_from_directory(os.path.join(app.root_path, 'static'), 'splitear.apk', as_attachment=True)
+    else:
+        return """
+        <html>
+        <head>
+            <title>Split-Ear APK Download</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body { background: #0C0F1E; color: #E8ECF5; font-family: sans-serif; text-align: center; padding: 60px 20px; }
+                .box { border: 1px solid #1C2138; background: #070912; border-radius: 12px; max-width: 450px; margin: 40px auto; padding: 30px; text-align: left; }
+                h1 { color: #00E5FF; text-align: center; }
+                code { background: #161A2E; padding: 2px 6px; border-radius: 4px; color: #FF2D95; font-family: monospace; }
+                .btn { display: block; text-align: center; padding: 12px; background: #FF2D95; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <h1>Split-Ear Android Link</h1>
+            <div class="box">
+                <p>The native Android app source code has been generated in your codebase directory under <code>/android-recorder</code>.</p>
+                <p><strong>To install:</strong></p>
+                <ol>
+                    <li>Open the <code>/android-recorder</code> folder in <b>Android Studio</b>.</li>
+                    <li>Build and compile the project (Gradle will generate an APK).</li>
+                    <li>Copy the compiled APK into the <code>static/</code> directory, rename it to <code>splitear.apk</code>, and refresh this page to download it directly.</li>
+                </ol>
+            </div>
+        </body>
+        </html>
+        """
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=True, threaded=True)
