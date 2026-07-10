@@ -2253,8 +2253,8 @@
         <div class="field">
         <label for="selL"><span class="hud-dot"></span> Source Select</label>
         <select id="selL">
-          <option value="none">None (Silence)</option>
-          <option value="lofi" selected>Lo-fi Beats</option>
+          <option value="none" selected>None (Silence)</option>
+          <option value="lofi">Lo-fi Beats</option>
           <option value="nature">Nature · Rain &amp; Birds</option>
           <option value="speech">Podcast / Speech (synth)</option>
           <option value="noise">White Noise</option>
@@ -2553,9 +2553,9 @@
         <div class="field">
         <label for="selR"><span class="hud-dot"></span> Source Select</label>
         <select id="selR">
-          <option value="none">None (Silence)</option>
+          <option value="none" selected>None (Silence)</option>
           <option value="lofi">Lo-fi Beats</option>
-          <option value="nature" selected>Nature · Rain &amp; Birds</option>
+          <option value="nature">Nature · Rain &amp; Birds</option>
           <option value="speech">Podcast / Speech (synth)</option>
           <option value="noise">White Noise</option>
         </select>
@@ -4613,6 +4613,7 @@
       }
 
       function restoreFromLocal(ch) {
+        return false;
         const side = chSide(ch);
         try {
           const saved = localStorage.getItem(`splitear_backup_${side}`);
