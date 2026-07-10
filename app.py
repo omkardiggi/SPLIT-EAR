@@ -1508,8 +1508,14 @@ def sse_stream():
     def stream():
         q = announcer.listen()
         try:
-            # Send an initial heartbeat
-            yield format_sse({'type': 'connected', 'room': room_id}, event='hello')
+            # Send an initial heartbeat with the current room state/clients
+            yield format_sse({
+                'type': 'connected',
+                'room': room_id,
+                'clients': room_state['clients'],
+                'leftOwner': room_state.get('leftOwner'),
+                'rightOwner': room_state.get('rightOwner')
+            }, event='hello')
             
             # Broadcast to all other listeners that a new device has joined!
             announcer.announce(format_sse({

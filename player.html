@@ -5140,12 +5140,24 @@
         }
         syncEventSource = new EventSource(`/api/events?room=${encodeURIComponent(roomId)}&clientId=${encodeURIComponent(clientId)}`);
 
-        syncEventSource.addEventListener('hello', () => {
+        syncEventSource.addEventListener('hello', (e) => {
           syncConnected = true;
           syncDot.classList.add('connected');
           syncStatusText.innerHTML = syncMode === 'gateway'
             ? 'Mode: <b>Audio Gateway</b> — sound plays from THIS device.'
             : 'Mode: <b>Remote Controller</b> — audio plays on the Gateway device.';
+
+          try {
+            const data = JSON.parse(e.data);
+            if (data.clients) {
+              roomClients = data.clients;
+            }
+            if (data.leftOwner !== undefined) leftOwner = data.leftOwner;
+            if (data.rightOwner !== undefined) rightOwner = data.rightOwner;
+            updateUI();
+          } catch (err) {
+            console.warn('Failed to parse hello event data:', err);
+          }
 
           if (syncMode === 'remote') {
             showPendingOverlay();
