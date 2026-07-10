@@ -277,6 +277,9 @@ def _parse_url_path_slug(url):
         for i, seg in enumerate(segments):
             if seg.lower() in descriptors and i + 1 < len(segments):
                 slug = segments[i + 1]
+                # Clean database ID suffix for Gaana URLs (e.g., "song-name-123" -> "song-name")
+                if 'gaana.com' in url:
+                    slug = re.sub(r'-\d+$', '', slug)
                 # If slug is just an ID/number/hash, check if it contains letters/words
                 clean = slug.replace('-', ' ').replace('_', ' ').strip()
                 if len(clean) >= 3 and not re.match(r'^[0-9a-fA-F]{24,}$', clean) and not clean.isdigit():
@@ -285,6 +288,8 @@ def _parse_url_path_slug(url):
         # Fallback to the longest non-numeric path segment that is not an ID
         valid_segments = []
         for seg in segments:
+            if 'gaana.com' in url:
+                seg = re.sub(r'-\d+$', '', seg)
             if seg.lower() not in descriptors and not seg.isdigit() and len(seg) >= 3:
                 if not re.match(r'^[0-9a-fA-F]{20,}$', seg) and not re.match(r'^[a-zA-Z0-9]{22}$', seg):
                     valid_segments.append(seg.replace('-', ' ').replace('_', ' ').strip())
@@ -451,7 +456,10 @@ def _handle_drm_platform(url, platform_name, suffix_patterns):
     Scrapes the page for the song/artist title and converts it to a YouTube search query.
     If scraping fails, it falls back to parsing the name from the URL path.
     """
-    title = _scrape_page_title(url)
+    title = None
+    # Bypass page scraping for Gaana and JioSaavn to avoid request timeouts / blocks
+    if 'gaana.com' not in url and 'jiosaavn.com' not in url:
+        title = _scrape_page_title(url)
     
     if not title:
         # Fallback to URL path slug parsing
@@ -558,7 +566,45 @@ def _get_youtube_oembed_title(url):
 
 
 def _resolve_ytsearch_to_id(search_url):
-    """For ytsearch1:query URLs, use yt-dlp extract_flat to get the video ID."""
+    """For ytsearch1:query URLs, use Piped API search first, then fall back to yt-dlp."""
+    query = search_url
+    if query.startswith('ytsearch1:'):
+        query = query.replace('ytsearch1:', '')
+    elif query.startswith('ytsearch:'):
+        query = query.replace('ytsearch:', '')
+    query = query.strip()
+
+    PIPED_INSTANCES = [
+        'https://api.piped.private.coffee',
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.adminforge.de',
+        'https://pipedapi.leptons.xyz',
+    ]
+    for instance in PIPED_INSTANCES:
+        try:
+            url = f"{instance}/search?q={http_requests.utils.quote(query)}&filter=videos"
+            logger.info(f"Resolving ytsearch via Piped search: {url}")
+            resp = http_requests.get(url, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get('items', [])
+                if items:
+                    first = items[0]
+                    first_url = first.get('url', '')
+                    video_id = None
+                    if first_url:
+                        video_id = _extract_yt_video_id(first_url)
+                        if not video_id and 'v=' in first_url:
+                            video_id = first_url.split('v=')[-1].split('&')[0]
+                        elif not video_id and first_url.startswith('/watch?v='):
+                            video_id = first_url[9:]
+                    if video_id:
+                        logger.info(f"Piped search resolved '{query}' to video ID: {video_id}")
+                        return video_id, f"https://www.youtube.com/watch?v={video_id}"
+        except Exception as e:
+            logger.warning(f"Piped search failed on {instance}: {e}")
+
+    # Fallback to original yt-dlp extraction
     try:
         with yt_dlp.YoutubeDL({'extract_flat': True, 'quiet': True, 'no_warnings': True}) as ydl:
             info = ydl.extract_info(search_url, download=False)
@@ -863,7 +909,15 @@ def get_playlist():
                 return jsonify(result)
             return jsonify({'error': 'Could not extract song info from Amazon Music. Try pasting a direct song link.'}), 400
 
-        # JioSaavn URLs fall through to yt-dlp native extraction below
+        # --- JioSaavn → Scrape page metadata (or slug fallback) → YouTube search ---
+        if 'jiosaavn.com' in url:
+            result = _handle_drm_platform(url, 'JioSaavn', [
+                r'\s*[-–—|]\s*JioSaavn.*$',
+                r'\s+on\s+JioSaavn.*$',
+            ])
+            if result and result.get('tracks'):
+                return jsonify(result)
+            return jsonify({'error': 'Could not extract song info from JioSaavn. Try pasting a direct song link.'}), 400
 
         # --- Gaana → Scrape page metadata → YouTube search ---
         if 'gaana.com' in url:
@@ -1087,47 +1141,20 @@ def get_stream():
 
     # Check if this is a YouTube or search query URL
     is_youtube = ('youtube.com' in url or 'youtu.be' in url or url.startswith('ytsearch'))
+    
+    # Step A: For YouTube/search URLs, try resolving and streaming via Piped API first
     if is_youtube:
-        logger.info(f"YouTube/Search URL detected: {url}. Attempting immediate SoundCloud search fallback.")
-        resolved_title = title_param
-        if not resolved_title:
-            video_id = _extract_yt_video_id(url)
-            if video_id:
-                resolved_title = _get_youtube_oembed_title(url)
-            elif url.startswith('ytsearch1:'):
-                resolved_title = url.replace('ytsearch1:', '')
-            elif url.startswith('ytsearch:'):
-                resolved_title = url.replace('ytsearch:', '')
-        
-        if resolved_title:
-            search_query = _clean_title_for_search(resolved_title)
-            logger.info(f"Searching SoundCloud for: '{search_query}'")
-            
-            ydl_opts_sc = {
-                'format': 'bestaudio[protocol=http]/bestaudio/best',
-                'skip_download': True,
-                'quiet': True,
-                'no_warnings': True,
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                }
-            }
-            
-            for attempt in range(3):
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts_sc) as ydl:
-                        info = ydl.extract_info(f"scsearch1:{search_query}", download=False)
-                        if 'entries' in info and len(info['entries']) > 0:
-                            stream_url = info['entries'][0].get('url')
-                            logger.info(f"SoundCloud search fallback SUCCESS: resolved to '{info['entries'][0].get('title')}' on attempt {attempt+1}")
-                            content_type = 'audio/mpeg'
-                            break
-                except Exception as sc_err:
-                    logger.warning(f"SoundCloud search fallback attempt {attempt+1} failed: {sc_err}")
-                    if attempt < 2:
-                        time.sleep(1.5)
+        video_id = _extract_yt_video_id(url)
+        if not video_id and url.startswith('ytsearch'):
+            video_id, resolved_url = _resolve_ytsearch_to_id(url)
+            if not video_id and resolved_url:
+                video_id = _extract_yt_video_id(resolved_url)
+                
+        if video_id:
+            logger.info(f"YouTube/Search: trying Piped API stream resolver for video ID {video_id}")
+            stream_url, piped_mime = _try_piped_stream(video_id)
+            if piped_mime:
+                content_type = piped_mime
 
     # Step 1: Try yt-dlp first (works for non-YouTube sites and unblocked IPs)
     if not stream_url:
@@ -1144,24 +1171,8 @@ def get_stream():
         except Exception as e:
             logger.warning(f"yt-dlp stream failed for {url}: {e}")
 
-    # Step 2: If yt-dlp failed, try Piped API for YouTube content
-    if not stream_url:
-        video_id = _extract_yt_video_id(url)
-        
-        # If it's a ytsearch1: query, resolve it to a video ID first
-        if not video_id and url.startswith('ytsearch'):
-            video_id, resolved_url = _resolve_ytsearch_to_id(url)
-            if not video_id and resolved_url:
-                video_id = _extract_yt_video_id(resolved_url)
-        
-        if video_id:
-            logger.info(f"Trying Piped API fallback for video ID: {video_id}")
-            stream_url, piped_mime = _try_piped_stream(video_id)
-            if piped_mime:
-                content_type = piped_mime
-
-    # Step 3: If Piped fallback failed (or returned 403 / blocked), try SoundCloud search fallback!
-    if not stream_url:
+    # Step 2: Fallback to SoundCloud search if Piped/yt-dlp stream fails for YouTube/search URLs
+    if not stream_url and is_youtube:
         logger.info("YouTube/Piped resolver failed. Attempting SoundCloud search fallback...")
         video_id = _extract_yt_video_id(url)
         title = "audio track"
@@ -1180,6 +1191,8 @@ def get_stream():
                     if data.get('title'):
                         title = data.get('title')
             except Exception as e:
+
+                
                 logger.warning(f"Could not get video title for SoundCloud search: {e}")
                 
         # Refined query builder: split on separators and filter out video descriptors

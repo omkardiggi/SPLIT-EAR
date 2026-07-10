@@ -2089,6 +2089,53 @@
     .cyber-overlay.visible {
       display: grid;
     }
+    /* ---------- Private Playback Locked Channel Overlay ---------- */
+    .locked-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(4, 5, 9, 0.96);
+      z-index: 100;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+      padding: 24px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    
+    .card.locked-channel .locked-overlay {
+      display: flex;
+    }
+    
+    .locked-icon {
+      font-size: 36px;
+      filter: drop-shadow(0 0 12px var(--accent));
+      animation: pulse-lock 2s infinite alternate;
+      user-select: none;
+    }
+    
+    .locked-text {
+      font-family: var(--display);
+      font-size: 14px;
+      letter-spacing: 0.05em;
+      color: var(--text);
+    }
+    
+    .locked-sub {
+      font-size: 11px;
+      color: var(--muted);
+      max-width: 240px;
+      line-height: 1.45;
+    }
+    
+    @keyframes pulse-lock {
+      from { transform: scale(0.92); opacity: 0.8; }
+      to { transform: scale(1.08); opacity: 1; }
+    }
+
     .cyber-modal {
       background: linear-gradient(180deg, var(--panel-2), var(--panel));
       border: 1px solid var(--line);
@@ -2182,6 +2229,13 @@
   <main>
     <!-- LEFT CHANNEL (CYAN HUD PANEL) -->
     <section class="card left" id="cardL" aria-label="Left channel, Track A">
+      <!-- Locked overlay -->
+      <div class="locked-overlay">
+        <div class="locked-icon">🔒</div>
+        <div class="locked-text">Locked &amp; Playing Privately</div>
+        <div class="locked-sub">Claimed by another user. You cannot view or control this feed.</div>
+      </div>
+
       <!-- Corner brackets for HUD design -->
       <div class="hud-bracket top-left"></div>
       <div class="hud-bracket top-right"></div>
@@ -2448,8 +2502,9 @@
             Open this same URL on another device to share control.
           </div>
           <div
-            style="font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center; margin-top: 4px;">
+            style="font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center; margin-top: 4px; display: flex; justify-content: center; align-items: center; gap: 8px;">
             ROOM ID: <span id="roomIdDisplay" style="color: var(--blue); font-weight: 600;">...</span>
+            <button id="roomExitBtn" style="display: none; padding: 4px 8px; font-family: var(--mono); font-size: 8px; font-weight: 600; background: rgba(255, 45, 149, 0.15); border: 1px solid var(--pink); border-radius: 4px; color: var(--pink); cursor: pointer; transition: all 0.15s; text-transform: uppercase;">EXIT ROOM</button>
           </div>
           <div style="display: flex; gap: 6px; margin-top: 2px;">
             <input type="text" id="roomJoinInput" placeholder="Enter Room ID..."
@@ -2475,6 +2530,13 @@
 
     <!-- RIGHT CHANNEL (PINK HUD PANEL) -->
     <section class="card right" id="cardR" aria-label="Right channel, Track B">
+      <!-- Locked overlay -->
+      <div class="locked-overlay">
+        <div class="locked-icon">🔒</div>
+        <div class="locked-text">Locked &amp; Playing Privately</div>
+        <div class="locked-sub">Claimed by another user. You cannot view or control this feed.</div>
+      </div>
+
       <div class="hud-bracket top-left"></div>
       <div class="hud-bracket top-right"></div>
       <div class="hud-bracket bottom-left"></div>
@@ -3020,8 +3082,50 @@
           });
         }
 
+        // Setup error event listener dynamically for seamless auto-reconnect
+        audio.addEventListener('error', (e) => {
+          console.error("Audio playback error:", e, audio.error);
+          
+          const lastTime = audio.currentTime;
+          const track = ch.playlistIndex !== -1 ? ch.playlistTracks[ch.playlistIndex] : null;
+          
+          if (track) {
+            const backendUrl = `/api/stream?url=${encodeURIComponent(track.url)}&title=${encodeURIComponent(track.title || '')}`;
+            // Switch to backend proxy if currently playing direct googlevideo stream
+            if (!audio.src.includes('/api/stream')) {
+              console.warn("Direct stream failed. Falling back to backend proxy stream at time:", lastTime);
+              initAudioElement(ch, backendUrl);
+              ch.audioElement.currentTime = lastTime;
+              ch.audioElement.play().catch(console.error);
+              toast("Connection interrupted. Switching to backup server...", "info");
+            } else {
+              // If it was already using the proxy, try to restart/re-establish connection
+              console.warn("Proxy stream disconnected. Re-connecting at time:", lastTime);
+              initAudioElement(ch, backendUrl);
+              ch.audioElement.currentTime = lastTime;
+              ch.audioElement.play().catch(console.error);
+            }
+          }
+        });
+
         // Setup ended event listener dynamically
         audio.addEventListener('ended', () => {
+          const cur = audio.currentTime;
+          const dur = audio.duration;
+          const isPremature = dur && dur > 0 && Math.abs(cur - dur) > 5;
+          
+          if (isPremature) {
+            console.warn("Playback ended prematurely at:", cur, "of", dur, ". Reconnecting...");
+            const track = ch.playlistIndex !== -1 ? ch.playlistTracks[ch.playlistIndex] : null;
+            if (track) {
+              const backendUrl = `/api/stream?url=${encodeURIComponent(track.url)}&title=${encodeURIComponent(track.title || '')}`;
+              initAudioElement(ch, backendUrl);
+              ch.audioElement.currentTime = cur;
+              ch.audioElement.play().catch(console.error);
+              return;
+            }
+          }
+
           if (ch.queue.length > 0) {
             const nextTrack = ch.queue.shift();
             renderQueue(ch);
@@ -3260,10 +3364,27 @@
         document.getElementById('statusR').textContent = chR.playing ? 'ACTIVE' : (chR.selectEl.value === 'none' && chR.playlistIndex === -1 ? 'SILENT' : 'PAUSED');
 
         // Update individual track titles in Now Playing HUD
-        const titleL = getTrackName(chL);
-        const titleR = getTrackName(chR);
+        let titleL = getTrackName(chL);
+        let titleR = getTrackName(chR);
+        
+        // Hide track titles if locked
+        if (typeof roomClients !== 'undefined' && roomClients.length > 1) {
+          if (ownedEarbud === 'left') {
+            titleR = "🔒 Locked (Playing Privately)";
+          } else if (ownedEarbud === 'right') {
+            titleL = "🔒 Locked (Playing Privately)";
+          }
+        }
+        
         document.getElementById('trackTitleL').textContent = titleL;
         document.getElementById('trackTitleR').textContent = titleR;
+
+        // Toggle locked overlay based on ownership
+        if (cardL && cardR) {
+          const isMulti = typeof roomClients !== 'undefined' && roomClients.length > 1;
+          cardL.classList.toggle('locked-channel', isMulti && ownedEarbud === 'right');
+          cardR.classList.toggle('locked-channel', isMulti && ownedEarbud === 'left');
+        }
 
         // Update individual play button states and styles
         const playBtnL = document.getElementById('playBtnL');
@@ -3286,6 +3407,11 @@
 
         // --- Multi-User Earbud Locking UI Logic ---
         try {
+          const exitBtn = document.getElementById('roomExitBtn');
+          if (exitBtn) {
+            exitBtn.style.display = (roomId && roomId !== 'default') ? 'inline-block' : 'none';
+          }
+
           const controlsL = cardL ? cardL.querySelector('.card-controls') : null;
           const controlsR = cardR ? cardR.querySelector('.card-controls') : null;
           const claimBtnL = document.getElementById('claimBtnL');
@@ -5176,8 +5302,13 @@
 
         roomId = newRoomId;
         const params = new URLSearchParams(window.location.search);
-        params.set('room', roomId);
-        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+        if (roomId === 'default') {
+          params.delete('room');
+        } else {
+          params.set('room', roomId);
+        }
+        const qs = params.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${qs ? '?' + qs : ''}`);
 
         // Update displayed values
         if (roomIdDisplay) roomIdDisplay.textContent = roomId;
@@ -5185,6 +5316,11 @@
 
         // Regenerate QR Code
         if (typeof generateQRCode === 'function') generateQRCode();
+
+        // Reset local ownership (release ours)
+        ownedEarbud = null;
+        leftOwner = null;
+        rightOwner = null;
 
         // Re-bootstrap sync connection to new room
         fetchInitialState().then(() => connectSSE());
@@ -5210,6 +5346,13 @@
               roomJoinInput.value = '';
             }
           }
+        });
+      }
+
+      const roomExitBtn = document.getElementById('roomExitBtn');
+      if (roomExitBtn) {
+        roomExitBtn.addEventListener('click', () => {
+          changeRoom('default');
         });
       }
 
@@ -5349,14 +5492,26 @@
 
       function updateFullscreen() {
         // Track names
-        fsTrackL.textContent = getTrackName(chL);
-        fsTrackR.textContent = getTrackName(chR);
+        let nameL = getTrackName(chL);
+        let nameR = getTrackName(chR);
+
+        const isMulti = typeof roomClients !== 'undefined' && roomClients.length > 1;
+        if (isMulti) {
+          if (ownedEarbud === 'left') {
+            nameR = "🔒 Locked (Playing Privately)";
+          } else if (ownedEarbud === 'right') {
+            nameL = "🔒 Locked (Playing Privately)";
+          }
+        }
+
+        fsTrackL.textContent = nameL;
+        fsTrackR.textContent = nameR;
 
         // Album art from YouTube thumbnails
         const trackL = chL.playlistTracks[chL.playlistIndex];
         const trackR = chR.playlistTracks[chR.playlistIndex];
-        const thumbL = getYouTubeThumbnail(trackL);
-        const thumbR = getYouTubeThumbnail(trackR);
+        const thumbL = (isMulti && ownedEarbud === 'right') ? null : getYouTubeThumbnail(trackL);
+        const thumbR = (isMulti && ownedEarbud === 'left') ? null : getYouTubeThumbnail(trackR);
 
         // Left art
         let imgL = fsArtL.querySelector('img');
