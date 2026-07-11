@@ -14,13 +14,14 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
-import androidx.appcompat.app.AppCompatActivity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
     private lateinit var etRoomId: EditText
     private lateinit var etServerUrl: EditText
     private lateinit var rgChannel: RadioGroup
+    private lateinit var rbLeft: RadioButton
+    private lateinit var rbRight: RadioButton
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
     private lateinit var btnLoadPlayer: Button
@@ -153,13 +154,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
-        val rbLeft = RadioButton(this).apply {
+        rbLeft = RadioButton(this).apply {
             text = "L-EAR"
             id = View.generateViewId()
             setTextColor(0xFFFFFFFF.toInt())
             buttonTintList = android.content.res.ColorStateList.valueOf(0xFF00E5FF.toInt())
         }
-        val rbRight = RadioButton(this).apply {
+        rbRight = RadioButton(this).apply {
             text = "R-EAR"
             id = View.generateViewId()
             setTextColor(0xFFFFFFFF.toInt())
@@ -350,9 +351,9 @@ class MainActivity : AppCompatActivity() {
 
     fun startCaptureFromWeb(channelSide: String) {
         if (channelSide == "left") {
-            rgChannel.check(rgChannel.getChildAt(0).id)
+            rgChannel.check(rbLeft.id)
         } else {
-            rgChannel.check(rgChannel.getChildAt(1).id)
+            rgChannel.check(rbRight.id)
         }
         val roomId = etRoomId.text.toString().trim()
         if (roomId.isEmpty()) {
@@ -383,9 +384,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "Permission to capture audio was denied.", Toast.LENGTH_SHORT).show()
                 // Revert state on Javascript UI
-                val selectedRbId = rgChannel.checkedRadioButtonId
-                val rb = findViewById<RadioButton>(selectedRbId)
-                val channelSide = if (rb != null && (rb.text.toString().contains("LEFT") || rb.text.toString().contains("L-EAR"))) "left" else "right"
+                val channelSide = if (rbLeft.isChecked) "left" else "right"
                 webView.post {
                     webView.evaluateJavascript("javascript:onNativeCaptureStateChanged(false, '$channelSide')", null)
                 }
@@ -394,9 +393,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCaptureService(resultCode: Int, data: Intent) {
-        val selectedRbId = rgChannel.checkedRadioButtonId
-        val rb = findViewById<RadioButton>(selectedRbId)
-        val channelSide = if (rb != null && (rb.text.toString().contains("LEFT") || rb.text.toString().contains("L-EAR"))) "left" else "right"
+        val channelSide = if (rbLeft.isChecked) "left" else "right"
         val serverUrl = etServerUrl.text.toString().trim()
         val roomId = etRoomId.text.toString().trim()
 
@@ -431,9 +428,7 @@ class MainActivity : AppCompatActivity() {
         val serviceIntent = Intent(this, AudioCaptureService::class.java)
         stopService(serviceIntent)
 
-        val selectedRbId = rgChannel.checkedRadioButtonId
-        val rb = findViewById<RadioButton>(selectedRbId)
-        val channelSide = if (rb != null && (rb.text.toString().contains("LEFT") || rb.text.toString().contains("L-EAR"))) "left" else "right"
+        val channelSide = if (rbLeft.isChecked) "left" else "right"
 
         btnStart.isEnabled = true
         btnStart.alpha = 1.0f
