@@ -4000,7 +4000,58 @@
 
       /* ---------- tab audio capture ---------- */
 
+      // Detect if running inside the Android App WebView
+      const isAndroidApp = (typeof AndroidApp !== 'undefined');
+
+      // Native App status change callback
+      window.onNativeCaptureStateChanged = function(active, side) {
+        const ch = side === 'left' ? chL : chR;
+        const sideName = side === 'left' ? 'L' : 'R';
+        const cardEl = side === 'left' ? cardL : cardR;
+        const btn = document.getElementById('capBtn' + sideName);
+        
+        if (active) {
+          ch.mode = 'live';
+          cardEl.classList.add('live');
+          if (btn) btn.textContent = '■ Stop system capture';
+          
+          let opt = [...ch.selectEl.options].find(o => o.value === 'live_android');
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = 'live_android';
+            opt.textContent = '◉ Live Android Capture';
+            ch.selectEl.appendChild(opt);
+          }
+          ch.selectEl.value = 'live_android';
+          ch.playing = true;
+          updateUI();
+          toast('System capture active on the ' + (sideName === 'L' ? 'LEFT' : 'RIGHT') + ' ear.', 'ok');
+        } else {
+          ch.mode = 'buffer';
+          cardEl.classList.remove('live');
+          if (btn) btn.textContent = '◉ Capture System Audio';
+          
+          // Revert selection if it was live_android
+          if (ch.selectEl.value === 'live_android') {
+            ch.selectEl.value = 'none';
+          }
+          ch.playing = false;
+          updateUI();
+          toast('System capture stopped.', '');
+        }
+      };
+
       async function captureTab(ch, cardEl, sideName) {
+        if (isAndroidApp) {
+          const active = ch.mode === 'live';
+          if (active) {
+            AndroidApp.stopCapture();
+          } else {
+            AndroidApp.startCapture(sideName === 'L' ? 'left' : 'right');
+          }
+          return;
+        }
+
         if (!navigator.mediaDevices?.getDisplayMedia) {
           toast('Tab capture is not supported in this browser. It works in Chrome and Edge on desktop.', 'warn');
           return;
@@ -4100,11 +4151,46 @@
       document.getElementById('capBtnR').addEventListener('click', () => captureTab(chR, cardR, 'R').catch(console.error));
 
       // Hide capture tab buttons if getDisplayMedia is not supported (like on iOS/Android mobile browsers)
+      // BUT if we are in the Android App, keep them! And if we are in a normal mobile browser, show APK download!
       if (!navigator.mediaDevices?.getDisplayMedia) {
         const btnL = document.getElementById('capBtnL');
         const btnR = document.getElementById('capBtnR');
-        if (btnL) btnL.style.display = 'none';
-        if (btnR) btnR.style.display = 'none';
+        if (isAndroidApp) {
+          if (btnL) {
+            btnL.textContent = '◉ Capture System Audio';
+            btnL.style.display = 'inline-flex';
+          }
+          if (btnR) {
+            btnR.textContent = '◉ Capture System Audio';
+            btnR.style.display = 'inline-flex';
+          }
+        } else {
+          // Normal mobile browser
+          if (btnL) {
+            btnL.textContent = '📥 Install Android App to Capture';
+            btnL.style.display = 'inline-flex';
+            btnL.onclick = function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              window.location.href = '/download/apk';
+            };
+          }
+          if (btnR) {
+            btnR.textContent = '📥 Install Android App to Capture';
+            btnR.style.display = 'inline-flex';
+            btnR.onclick = function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              window.location.href = '/download/apk';
+            };
+          }
+        }
+      } else {
+        // Desktop browser - ensure proper standard button text
+        const btnL = document.getElementById('capBtnL');
+        const btnR = document.getElementById('capBtnR');
+        if (btnL && !isAndroidApp) btnL.textContent = '◉ Capture Browser Tab';
+        if (btnR && !isAndroidApp) btnR.textContent = '◉ Capture Browser Tab';
       }
 
       /* ---------- Live Android Audio Stream Rendering ---------- */

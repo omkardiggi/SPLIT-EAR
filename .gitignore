@@ -7,3 +7,7 @@ env/
 node_modules/
 .DS_Store
 scratch/
+.gradle-dist/
+android-recorder/app/build/
+android-recorder/build/
+android-recorder/.gradle/
