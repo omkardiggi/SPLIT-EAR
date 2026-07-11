@@ -17,14 +17,14 @@ import android.widget.*
 
 class MainActivity : Activity() {
 
-    private lateinit var etRoomId: EditText
-    private lateinit var etServerUrl: EditText
+    private val serverUrl = "https://split-ear-m30r.onrender.com"
+    private var roomId = ""
+
     private lateinit var rgChannel: RadioGroup
     private lateinit var rbLeft: RadioButton
     private lateinit var rbRight: RadioButton
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
-    private lateinit var btnLoadPlayer: Button
     private lateinit var btnToggleControls: Button
     private lateinit var tvStatus: TextView
     private lateinit var controlsLayout: LinearLayout
@@ -101,26 +101,6 @@ class MainActivity : Activity() {
             )
         }
 
-        etServerUrl = createCyberpunkEditText("Server URL", "https://split-ear-m30r.onrender.com").apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 8, 0, 8)
-            }
-        }
-        controlsLayout.addView(etServerUrl)
-
-        etRoomId = createCyberpunkEditText("Room ID", "").apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 8, 0, 16)
-            }
-        }
-        controlsLayout.addView(etRoomId)
-
         // Side selector layout
         val sideSelectorLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -173,7 +153,7 @@ class MainActivity : Activity() {
 
         controlsLayout.addView(sideSelectorLayout)
 
-        // Action Buttons Row: Start, Stop, Load Player
+        // Action Buttons Row: Start, Stop
         val buttonsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -193,18 +173,10 @@ class MainActivity : Activity() {
             isEnabled = false
             alpha = 0.5f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(0, 0, 8, 0)
+                setMargins(8, 0, 0, 0)
             }
         }
         buttonsRow.addView(btnStop)
-
-        btnLoadPlayer = createCyberpunkButton("LOAD", 0xFF1C2138.toInt(), 0xFF00E5FF.toInt()).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        buttonsRow.addView(btnLoadPlayer)
 
         controlsLayout.addView(buttonsRow)
 
@@ -267,15 +239,12 @@ class MainActivity : Activity() {
             }
         }
 
-        btnLoadPlayer.setOnClickListener {
-            loadPlayerFromInputs()
-        }
-
         btnStart.setOnClickListener {
-            val roomId = etRoomId.text.toString().trim()
             if (roomId.isEmpty()) {
-                Toast.makeText(this, "Please enter a valid Room ID", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+                roomId = "room-" + (100000..999999).random()
+                webView.post {
+                    webView.evaluateJavascript("javascript:window.changeRoom('$roomId')", null)
+                }
             }
             requestScreenCapturePermission()
         }
@@ -285,24 +254,7 @@ class MainActivity : Activity() {
         }
 
         // Load the web page immediately on startup
-        loadPlayerFromInputs()
-    }
-
-    private fun createCyberpunkEditText(hintText: String, defaultText: String): EditText {
-        return EditText(this).apply {
-            hint = hintText
-            setText(defaultText)
-            setTextColor(0xFFFFFFFF.toInt())
-            setHintTextColor(0xFF6B7385.toInt())
-            textSize = 14f
-            val gd = GradientDrawable().apply {
-                setColor(0xFF070912.toInt())
-                cornerRadius = 12f
-                setStroke(2, 0xFF1C2138.toInt())
-            }
-            background = gd
-            setPadding(32, 24, 32, 24)
-        }
+        webView.loadUrl(serverUrl)
     }
 
     private fun createCyberpunkButton(textStr: String, bgColor: Int, textColor: Int): Button {
@@ -320,28 +272,20 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun loadPlayerFromInputs() {
-        val serverUrl = etServerUrl.text.toString().trim()
-        val roomId = etRoomId.text.toString().trim()
-        val url = if (roomId.isNotEmpty()) {
-            "$serverUrl/?room=$roomId"
-        } else {
-            serverUrl
-        }
-        webView.loadUrl(url)
-    }
-
     private fun checkAndSyncRoomId(url: String) {
         try {
             val uri = Uri.parse(url)
             val roomParam = uri.getQueryParameter("room")
             if (!roomParam.isNullOrEmpty()) {
                 runOnUiThread {
-                    val currentInput = etRoomId.text.toString().trim()
-                    if (currentInput != roomParam.trim()) {
-                        etRoomId.setText(roomParam.trim())
-                        Toast.makeText(this@MainActivity, "Room ID Synced: $roomParam", Toast.LENGTH_SHORT).show()
+                    if (roomId != roomParam.trim()) {
+                        roomId = roomParam.trim()
+                        Toast.makeText(this@MainActivity, "Room Synced: $roomId", Toast.LENGTH_SHORT).show()
                     }
+                }
+            } else {
+                runOnUiThread {
+                    roomId = ""
                 }
             }
         } catch (e: Exception) {
@@ -355,11 +299,11 @@ class MainActivity : Activity() {
         } else {
             rgChannel.check(rbRight.id)
         }
-        val roomId = etRoomId.text.toString().trim()
         if (roomId.isEmpty()) {
-            // Generate a random temporary room if empty
-            val randRoom = "room-" + (100000..999999).random()
-            etRoomId.setText(randRoom)
+            roomId = "room-" + (100000..999999).random()
+            webView.post {
+                webView.evaluateJavascript("javascript:window.changeRoom('$roomId')", null)
+            }
         }
         requestScreenCapturePermission()
     }
@@ -394,8 +338,6 @@ class MainActivity : Activity() {
 
     private fun startCaptureService(resultCode: Int, data: Intent) {
         val channelSide = if (rbLeft.isChecked) "left" else "right"
-        val serverUrl = etServerUrl.text.toString().trim()
-        val roomId = etRoomId.text.toString().trim()
 
         val serviceIntent = Intent(this, AudioCaptureService::class.java).apply {
             putExtra("RESULT_CODE", resultCode)

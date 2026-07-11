@@ -2502,19 +2502,27 @@
           <div class="sync-status-text" id="syncStatusText">
             Open this same URL on another device to share control.
           </div>
-          <div
-            style="font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center; margin-top: 4px; display: flex; justify-content: center; align-items: center; gap: 8px;">
-            ROOM ID: <span id="roomIdDisplay" style="color: var(--blue); font-weight: 600;">...</span>
-            <button id="roomExitBtn" style="display: none; padding: 4px 8px; font-family: var(--mono); font-size: 8px; font-weight: 600; background: rgba(255, 45, 149, 0.15); border: 1px solid var(--pink); border-radius: 4px; color: var(--pink); cursor: pointer; transition: all 0.15s; text-transform: uppercase;">EXIT ROOM</button>
+          <!-- Solo Mode Panel -->
+          <div id="roomSoloContainer" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%;">
+            <button id="roomCreateBtn" class="upload-btn" style="width: 100%; font-family: var(--mono); font-size: 9px; font-weight: 600; padding: 8px; box-sizing: border-box; cursor: pointer;">➕ CREATE SYNC ROOM</button>
+            <div style="display: flex; gap: 6px; width: 100%; box-sizing: border-box;">
+              <input type="text" id="roomJoinInput" placeholder="Enter Room ID..."
+                style="flex: 1; min-width: 0; padding: 8px 10px; font-family: var(--mono); font-size: 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 6px; color: #fff; text-align: center;" />
+              <button id="roomJoinBtn"
+                style="padding: 8px 14px; font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--blue); cursor: pointer; transition: all 0.15s;">JOIN</button>
+            </div>
           </div>
-          <div style="display: flex; gap: 6px; margin-top: 2px;">
-            <input type="text" id="roomJoinInput" placeholder="Enter Room ID..."
-              style="flex: 1; padding: 8px 10px; font-family: var(--mono); font-size: 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--line); border-radius: 6px; color: #fff; text-align: center;" />
-            <button id="roomJoinBtn"
-              style="padding: 8px 14px; font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--blue); cursor: pointer; transition: all 0.15s;">JOIN</button>
+
+          <!-- Connected Mode Panel -->
+          <div id="roomConnectedContainer" style="display: none; width: 100%;">
+            <div
+              style="font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center; margin-top: 10px; display: flex; justify-content: center; align-items: center; gap: 8px;">
+              ROOM ID: <span id="roomIdDisplay" style="color: var(--blue); font-weight: 600;">...</span>
+              <button id="roomExitBtn" style="padding: 4px 8px; font-family: var(--mono); font-size: 8px; font-weight: 600; background: rgba(255, 45, 149, 0.15); border: 1px solid var(--pink); border-radius: 4px; color: var(--pink); cursor: pointer; transition: all 0.15s; text-transform: uppercase;">EXIT ROOM</button>
+            </div>
+            <div class="sync-url-display" id="syncUrlDisplay">loading...</div>
+            <div class="qr-container" id="qrContainer"></div>
           </div>
-          <div class="sync-url-display" id="syncUrlDisplay">loading...</div>
-          <div class="qr-container" id="qrContainer"></div>
           
           <!-- Android app download section -->
           <div style="border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; text-align: center;">
@@ -2777,11 +2785,6 @@
       // --- Dynamic Room Initialization ---
       const urlParams = new URLSearchParams(window.location.search);
       let roomId = urlParams.get('room');
-      if (!roomId) {
-        roomId = 'room-' + Math.random().toString(36).substring(2, 8);
-        urlParams.set('room', roomId);
-        window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
-      }
 
       const AC = window.AudioContext || window.webkitAudioContext;
       let ctx = null;
@@ -5470,40 +5473,94 @@
         }
       }
 
-      // Boot sync system
-      fetchInitialState().then(() => connectSSE());
+      function updateRoomUI(isConnected) {
+        const soloContainer = document.getElementById('roomSoloContainer');
+        const connectedContainer = document.getElementById('roomConnectedContainer');
+        const syncDot = document.getElementById('syncDot');
+        const syncStatusText = document.getElementById('syncStatusText');
+        const urlDisplay = document.getElementById('syncUrlDisplay');
 
-      // --- Dynamic Room Switching Handlers ---
-      function changeRoom(newRoomId) {
-        newRoomId = newRoomId.trim();
-        if (!newRoomId) return;
+        // Hide URL Display inside the Android App wrapper as requested
+        if (isAndroidApp && urlDisplay) {
+          urlDisplay.style.display = 'none';
+        }
+
+        if (isConnected && roomId) {
+          if (soloContainer) soloContainer.style.display = 'none';
+          if (connectedContainer) connectedContainer.style.display = 'block';
+          if (roomIdDisplay) roomIdDisplay.textContent = roomId;
+          if (urlDisplay) urlDisplay.textContent = window.location.href;
+          if (syncDot) syncDot.classList.add('connected');
+          if (syncStatusText) {
+            syncStatusText.innerHTML = syncMode === 'gateway'
+              ? 'Mode: <b>Audio Gateway</b> — sound plays from THIS device.'
+              : 'Mode: <b>Remote Controller</b> — audio plays on the Gateway device.';
+          }
+          if (typeof generateQRCode === 'function') generateQRCode();
+        } else {
+          if (soloContainer) soloContainer.style.display = 'flex';
+          if (connectedContainer) connectedContainer.style.display = 'none';
+          if (syncDot) syncDot.classList.remove('connected');
+          if (syncStatusText) {
+            syncStatusText.innerHTML = '<b>Solo Mode</b> — create or join a room to sync multiple devices.';
+          }
+        }
+      }
+
+      // Boot sync system
+      if (roomId) {
+        updateRoomUI(true);
+        fetchInitialState().then(() => connectSSE());
+      } else {
+        updateRoomUI(false);
+      }
+
+      // Make changeRoom globally accessible so native WebView interface can call it
+      window.changeRoom = function(newRoomId) {
+        newRoomId = newRoomId ? newRoomId.trim() : '';
+        if (!newRoomId || newRoomId === 'default' || newRoomId === 'solo') {
+          roomId = null;
+          const params = new URLSearchParams(window.location.search);
+          params.delete('room');
+          const qs = params.toString();
+          window.history.replaceState({}, '', `${window.location.pathname}${qs ? '?' + qs : ''}`);
+
+          if (syncEventSource) {
+            syncEventSource.close();
+            syncEventSource = null;
+          }
+
+          ownedEarbud = null;
+          leftOwner = null;
+          rightOwner = null;
+
+          updateRoomUI(false);
+          toast('Switched to Solo Mode.', '');
+          return;
+        }
 
         roomId = newRoomId;
         const params = new URLSearchParams(window.location.search);
-        if (roomId === 'default') {
-          params.delete('room');
-        } else {
-          params.set('room', roomId);
-        }
+        params.set('room', roomId);
         const qs = params.toString();
         window.history.replaceState({}, '', `${window.location.pathname}${qs ? '?' + qs : ''}`);
 
-        // Update displayed values
-        if (roomIdDisplay) roomIdDisplay.textContent = roomId;
-        syncUrlDisplay.textContent = window.location.href;
+        updateRoomUI(true);
 
-        // Regenerate QR Code
-        if (typeof generateQRCode === 'function') generateQRCode();
-
-        // Reset local ownership (release ours)
         ownedEarbud = null;
         leftOwner = null;
         rightOwner = null;
 
-        // Re-bootstrap sync connection to new room
         fetchInitialState().then(() => connectSSE());
+        toast(`Joined room: ${roomId}`, 'ok');
+      };
 
-        toast(`Switched to room: ${roomId}`, 'ok');
+      const roomCreateBtn = document.getElementById('roomCreateBtn');
+      if (roomCreateBtn) {
+        roomCreateBtn.addEventListener('click', () => {
+          const randRoom = 'room-' + Math.random().toString(36).substring(2, 8);
+          window.changeRoom(randRoom);
+        });
       }
 
       const roomJoinBtn = document.getElementById('roomJoinBtn');
@@ -5512,7 +5569,7 @@
         roomJoinBtn.addEventListener('click', () => {
           const val = roomJoinInput.value;
           if (val) {
-            changeRoom(val);
+            window.changeRoom(val);
             roomJoinInput.value = '';
           }
         });
@@ -5520,7 +5577,7 @@
           if (e.key === 'Enter') {
             const val = roomJoinInput.value;
             if (val) {
-              changeRoom(val);
+              window.changeRoom(val);
               roomJoinInput.value = '';
             }
           }
@@ -5530,7 +5587,7 @@
       const roomExitBtn = document.getElementById('roomExitBtn');
       if (roomExitBtn) {
         roomExitBtn.addEventListener('click', () => {
-          changeRoom('default');
+          window.changeRoom('default');
         });
       }
 
