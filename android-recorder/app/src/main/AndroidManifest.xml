@@ -10,7 +10,7 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@drawable/app_icon"
         android:label="Split-Ear Audio Link"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
